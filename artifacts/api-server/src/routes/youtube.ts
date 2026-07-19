@@ -325,9 +325,11 @@ router.post("/analyze", async (req: Request, res: Response) => {
         message: "This video is blocked due to copyright restrictions",
       });
     } else {
+      const detail = err instanceof Error ? err.message : "Unknown error";
+      req.log.error({ detail }, "Video analysis failed - detail");
       res.status(500).json({
         error: "ANALYSIS_FAILED",
-        message: "Failed to analyse this video. It may be unavailable in your region.",
+        message: `Failed to analyse this video: ${detail}`,
       });
     }
   }
