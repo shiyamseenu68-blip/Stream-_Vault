@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: StreamVault API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: youtube
+    description: YouTube analysis and download operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,134 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /analyze:
+    post:
+      operationId: analyzeUrl
+      tags: [youtube]
+      summary: Analyze a YouTube URL
+      description: Detects whether the URL is a video or playlist and returns metadata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeInput"
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyzeResult"
+        "400":
+          description: Invalid URL or request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Video not found or unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /download:
+    get:
+      operationId: downloadMedia
+      tags: [youtube]
+      summary: Download a single video or audio
+      description: Streams the video (mp4) or audio (mp3) file for direct download
+      parameters:
+        - in: query
+          name: url
+          required: true
+          schema:
+            type: string
+          description: YouTube video URL
+        - in: query
+          name: format
+          required: true
+          schema:
+            type: string
+            enum: [video, audio]
+          description: Download format (video = mp4, audio = mp3)
+        - in: query
+          name: quality
+          required: false
+          schema:
+            type: string
+            enum: [highest, lowest, 1080p, 720p, 480p, 360p, 240p, 144p]
+          description: Video quality (only applies to video format)
+      responses:
+        "200":
+          description: File stream
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /download/playlist:
+    post:
+      operationId: downloadPlaylistItem
+      tags: [youtube]
+      summary: Download a playlist item
+      description: Streams a single item from a playlist as video or audio
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaylistDownloadInput"
+      responses:
+        "200":
+          description: File stream
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +164,159 @@ components:
       required:
         - status
 
+    AnalyzeInput:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          description: YouTube URL (video or playlist)
+
+    PlaylistDownloadInput:
+      type: object
+      required:
+        - url
+        - format
+      properties:
+        url:
+          type: string
+          description: YouTube video URL within the playlist
+        format:
+          type: string
+          enum: [video, audio]
+          description: Download format
+        quality:
+          type: string
+          enum: [highest, lowest, 1080p, 720p, 480p, 360p, 240p, 144p]
+          description: Video quality
+
+    VideoInfo:
+      type: object
+      required:
+        - type
+        - videoId
+        - title
+        - thumbnail
+        - duration
+        - durationSeconds
+        - channel
+        - channelUrl
+        - viewCount
+        - uploadDate
+        - description
+        - url
+      properties:
+        type:
+          type: string
+          enum: [video]
+        videoId:
+          type: string
+        title:
+          type: string
+        thumbnail:
+          type: string
+        duration:
+          type: string
+        durationSeconds:
+          type: number
+        channel:
+          type: string
+        channelUrl:
+          type: ["string", "null"]
+        channelAvatar:
+          type: ["string", "null"]
+        subscribers:
+          type: ["string", "null"]
+        viewCount:
+          type: ["number", "null"]
+        uploadDate:
+          type: ["string", "null"]
+        description:
+          type: ["string", "null"]
+        category:
+          type: ["string", "null"]
+        isShort:
+          type: boolean
+        url:
+          type: string
+
+    PlaylistItem:
+      type: object
+      required:
+        - videoId
+        - title
+        - thumbnail
+        - duration
+        - durationSeconds
+        - url
+      properties:
+        videoId:
+          type: string
+        title:
+          type: string
+        thumbnail:
+          type: string
+        duration:
+          type: string
+        durationSeconds:
+          type: number
+        channel:
+          type: ["string", "null"]
+        url:
+          type: string
+
+    PlaylistInfo:
+      type: object
+      required:
+        - type
+        - playlistId
+        - title
+        - thumbnail
+        - videoCount
+        - totalDuration
+        - creator
+        - url
+        - videos
+      properties:
+        type:
+          type: string
+          enum: [playlist]
+        playlistId:
+          type: string
+        title:
+          type: string
+        thumbnail:
+          type: string
+        videoCount:
+          type: number
+        totalDuration:
+          type: string
+        totalDurationSeconds:
+          type: number
+        creator:
+          type: ["string", "null"]
+        url:
+          type: string
+        videos:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlaylistItem"
+
+    AnalyzeResult:
+      oneOf:
+        - $ref: "#/components/schemas/VideoInfo"
+        - $ref: "#/components/schemas/PlaylistInfo"
+
+    ApiError:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        code:
+          type: ["string", "null"]
