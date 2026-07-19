@@ -55,3 +55,9 @@ replit.nix
 
 # Temporary files
 attached_assets/
+
+# Dream query scripts
+_dream_query*.py
+
+# Temporary player scripts
+artifacts/api-server/*-player-script.js

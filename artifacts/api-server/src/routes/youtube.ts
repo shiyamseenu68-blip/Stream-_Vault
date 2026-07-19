@@ -16,9 +16,10 @@ import { randomBytes } from "crypto";
 const execFileAsync = promisify(execFile);
 const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
-const YT_DLP = process.platform === "win32" 
-  ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
-  : "yt-dlp";
+const YT_DLP = process.env.YT_DLP_PATH
+  || (process.platform === "win32"
+    ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
+    : "yt-dlp");
 
 const router = Router();
 
