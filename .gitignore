@@ -47,3 +47,11 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+.replit
+.replitignore
+replit.md
+replit.nix
+.agents/
+
+# Temporary files
+attached_assets/
