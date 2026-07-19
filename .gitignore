@@ -41,23 +41,28 @@ testem.log
 .DS_Store
 Thumbs.db
 
-.cursor/rules/nx-rules.mdc
-.github/instructions/nx.instructions.md
-
 # Replit
 .cache/
 .local/
+.mimocode/
 .replit
 .replitignore
+.replit.nix
 replit.md
 replit.nix
 .agents/
+.replit-artifact/
 
 # Temporary files
 attached_assets/
+*.py
 
 # Dream query scripts
 _dream_query*.py
 
 # Temporary player scripts
 artifacts/api-server/*-player-script.js
+
+# Build output
+artifacts/*/dist/
+
