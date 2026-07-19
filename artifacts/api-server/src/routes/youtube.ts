@@ -147,17 +147,46 @@ function deepFind(obj: any, targetKey: string, maxDepth: number): any {
  * Works reliably on servers unlike ytdl-core which gets blocked.
  */
 async function ytdlpDumpJson(url: string): Promise<Record<string, any>> {
-  const { stdout } = await execFileAsync(
-    YT_DLP,
-    [
-      "--dump-json",
-      "--no-playlist",
-      "--no-warnings",
-      url,
-    ],
-    { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 },
+  // Try multiple player clients with fallback
+  const clients = ["tv", "mweb", "web"];
+  const cookies = process.env.YOUTUBE_COOKIES;
+
+  for (const client of clients) {
+    try {
+      const args = [
+        "--dump-json",
+        "--no-playlist",
+        "--no-warnings",
+        "--extractor-args", `youtube:player_client=${client}`,
+      ];
+
+      if (cookies) {
+        args.push("--cookies", cookies);
+      }
+
+      args.push(url);
+
+      const { stdout } = await execFileAsync(YT_DLP, args, {
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return JSON.parse(stdout.trim());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      // If bot detection or this client failed, try next
+      if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
+        continue;
+      }
+      // Other errors (invalid URL, private video, etc.) — throw immediately
+      throw err;
+    }
+  }
+
+  // All clients failed — throw with helpful message
+  throw new Error(
+    "YouTube is blocking automated requests from this server. " +
+    "Set YOUTUBE_COOKIES env var with a cookies.txt file path to bypass this."
   );
-  return JSON.parse(stdout.trim());
 }
 
 router.post("/analyze", async (req: Request, res: Response) => {
@@ -380,10 +409,15 @@ async function downloadViaTempFile(
   const tmpPath = join(tmpdir(), `sv_${id}.${ext}`);
 
   // yt-dlp args
+  const cookies = process.env.YOUTUBE_COOKIES;
   const args: string[] = [
     "--no-playlist",
     "-o", tmpPath,
   ];
+
+  if (cookies) {
+    args.push("--cookies", cookies);
+  }
 
   if (format === "audio") {
     args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
