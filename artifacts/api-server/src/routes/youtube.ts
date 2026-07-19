@@ -1,13 +1,22 @@
 /**
  * YouTube analyze and download routes.
- * Uses @distube/ytdl-core for metadata and streaming,
- * fluent-ffmpeg for MP3 audio conversion (ffmpeg is pre-installed).
+ * - /analyze  : uses @distube/ytdl-core (metadata only — still works fine)
+ * - /download : uses yt-dlp subprocess (replaces broken ytdl-core stream URLs)
  */
 
 import { Router, type Request, type Response } from "express";
 import ytdl from "@distube/ytdl-core";
-import ffmpeg from "fluent-ffmpeg";
-import { PassThrough } from "stream";
+import { spawn, execFile } from "child_process";
+import { promisify } from "util";
+import { createReadStream, unlink, stat } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { randomBytes } from "crypto";
+
+const execFileAsync = promisify(execFile);
+const statAsync = promisify(stat);
+const unlinkAsync = promisify(unlink);
+const YT_DLP = "yt-dlp";
 
 const router = Router();
 
@@ -303,6 +312,134 @@ router.post("/analyze", async (req: Request, res: Response) => {
   }
 });
 
+// ─── yt-dlp helpers ──────────────────────────────────────────────────────────
+
+/** Map quality string → yt-dlp -f selector (HLS-compatible, no ext=mp4 filter). */
+function ytdlpVideoFormat(quality?: string): string {
+  const heightMap: Record<string, number> = {
+    "1080p": 1080, "720p": 720, "480p": 480,
+    "360p": 360, "240p": 240, "144p": 144,
+  };
+  const h = quality ? heightMap[quality] : undefined;
+  if (quality === "lowest") {
+    return "worstvideo+worstaudio/worst";
+  }
+  if (h) {
+    return `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]/best`;
+  }
+  return "bestvideo+bestaudio/best";
+}
+
+/**
+ * Download a YouTube URL to a temp file using yt-dlp, then stream the file
+ * to the response. Using a temp file (vs stdout pipe) avoids HLS merge issues
+ * and lets us set Content-Length for a proper browser progress bar.
+ *
+ * @param normalised  Validated YouTube URL
+ * @param format      "video" | "audio"
+ * @param quality     e.g. "720p" | "highest"
+ * @param req         Express request (for logging + close detection)
+ * @param res         Express response
+ */
+async function downloadViaTempFile(
+  normalised: string,
+  format: string,
+  quality: string | undefined,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const id = randomBytes(8).toString("hex");
+  const ext = format === "audio" ? "mp3" : "mp4";
+  const tmpPath = join(tmpdir(), `sv_${id}.${ext}`);
+
+  // yt-dlp args
+  const args: string[] = [
+    "--extractor-args", "youtube:player_client=ios",
+    "--no-playlist",
+    "-o", tmpPath,
+  ];
+
+  if (format === "audio") {
+    args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
+  } else {
+    args.push(
+      "-f", ytdlpVideoFormat(quality),
+      "--merge-output-format", "mp4",
+    );
+  }
+
+  args.push(normalised);
+
+  req.log.info({ args: args.join(" ") }, "Launching yt-dlp");
+
+  // Run yt-dlp to completion (downloads HLS segments + merges)
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(YT_DLP, args, { stdio: ["ignore", "pipe", "pipe"] });
+
+    const stderrLines: string[] = [];
+    proc.stderr!.on("data", (d: Buffer) => {
+      const line = d.toString().trimEnd();
+      stderrLines.push(line);
+      req.log.debug({ msg: line }, "yt-dlp");
+    });
+
+    // Abort if client disconnects
+    const onClose = () => { if (!proc.killed) proc.kill("SIGTERM"); };
+    req.on("close", onClose);
+
+    proc.on("error", (err) => {
+      req.off("close", onClose);
+      reject(err);
+    });
+
+    proc.on("close", (code) => {
+      req.off("close", onClose);
+      if (code === 0) {
+        resolve();
+      } else {
+        const lastErr = stderrLines.slice(-3).join(" | ");
+        reject(new Error(`yt-dlp exited ${code}: ${lastErr}`));
+      }
+    });
+  });
+
+  // Stream the completed file to the browser
+  const { size } = await statAsync(tmpPath);
+  const mimeType = format === "audio" ? "audio/mpeg" : "video/mp4";
+
+  // Get title from yt-dlp metadata (fast, already cached after download)
+  let titleRaw = "video";
+  try {
+    const { stdout } = await execFileAsync(
+      YT_DLP,
+      ["--print", "title", "--no-playlist", "--no-warnings",
+       "--extractor-args", "youtube:player_client=ios", normalised],
+      { timeout: 10_000 },
+    );
+    titleRaw = stdout.trim() || "video";
+  } catch { /* keep default */ }
+
+  const safeTitle = safeFilename(titleRaw);
+
+  res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}.${ext}"`);
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("Content-Length", String(size));
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cache-Control", "no-store");
+
+  const fileStream = createReadStream(tmpPath);
+  fileStream.pipe(res);
+
+  // Clean up temp file once the response is done
+  res.on("finish", () => {
+    unlinkAsync(tmpPath).catch(() => {/* ignore cleanup errors */});
+  });
+  res.on("close", () => {
+    fileStream.destroy();
+    unlinkAsync(tmpPath).catch(() => {/* ignore */});
+  });
+}
+
 // ─── Download ─────────────────────────────────────────────────────────────────
 
 router.get("/download", async (req: Request, res: Response) => {
@@ -331,113 +468,8 @@ router.get("/download", async (req: Request, res: Response) => {
   req.log.info({ url: normalised, format, quality }, "Download requested");
 
   try {
-    const info = await ytdl.getInfo(normalised);
-    const title = safeFilename(info.videoDetails.title);
-
-    if (format === "audio") {
-      // ── Audio (MP3 via ffmpeg) ───────────────────────────────────────────
-      res.setHeader("Content-Disposition", `attachment; filename="${title}.mp3"`);
-      res.setHeader("Content-Type", "audio/mpeg");
-      res.setHeader("X-Content-Type-Options", "nosniff");
-
-      const audioStream = ytdl(normalised, {
-        filter: "audioonly",
-        quality: "highestaudio",
-        highWaterMark: 1 << 25, // 32 MB buffer
-      });
-
-      const passThrough = new PassThrough();
-
-      const proc = ffmpeg(audioStream)
-        .audioBitrate(192)
-        .format("mp3")
-        .on("error", (err) => {
-          req.log.error({ err }, "ffmpeg audio conversion error");
-          if (!res.headersSent) {
-            res.status(500).json({ error: "CONVERSION_ERROR", message: "Audio conversion failed" });
-          } else {
-            passThrough.destroy(err);
-          }
-        });
-
-      proc.pipe(passThrough);
-      passThrough.pipe(res);
-
-      req.on("close", () => {
-        audioStream.destroy();
-        proc.kill("SIGKILL");
-      });
-    } else {
-      // ── Video (MP4) ──────────────────────────────────────────────────────
-      res.setHeader("Content-Disposition", `attachment; filename="${title}.mp4"`);
-      res.setHeader("Content-Type", "video/mp4");
-      res.setHeader("X-Content-Type-Options", "nosniff");
-
-      const qualStr = mapQuality(quality);
-
-      // Try to get a single combined mp4 stream first (simpler, no ffmpeg mux needed)
-      const formats = ytdl.filterFormats(info.formats, "videoandaudio");
-      let videoStream: ReturnType<typeof ytdl>;
-
-      if (formats.length > 0) {
-        // We have combined streams — pick by quality label
-        const qualityLabel = quality && quality !== "highest" && quality !== "lowest"
-          ? quality
-          : undefined;
-
-        const chosen = qualityLabel
-          ? (formats.find((f) => f.qualityLabel === qualityLabel) ?? formats[0])
-          : qualStr === "lowest"
-            ? formats[formats.length - 1]
-            : formats[0];
-
-        videoStream = ytdl(normalised, { format: chosen });
-      } else {
-        // No combined streams (common for 1080p+) — download video+audio and mux
-        const videoOnly = ytdl(normalised, {
-          quality: qualStr === "highest" || qualStr === "lowest" ? qualStr : "highestvideo",
-          filter: "videoonly",
-          highWaterMark: 1 << 25,
-        });
-        const audioOnly = ytdl(normalised, {
-          filter: "audioonly",
-          quality: "highestaudio",
-          highWaterMark: 1 << 25,
-        });
-
-        const passThrough = new PassThrough();
-
-        const proc = ffmpeg()
-          .input(videoOnly)
-          .input(audioOnly)
-          .outputOptions(["-c:v copy", "-c:a aac", "-movflags frag_keyframe+empty_moov"])
-          .format("mp4")
-          .on("error", (err) => {
-            req.log.error({ err }, "ffmpeg mux error");
-            if (!res.headersSent) {
-              res.status(500).json({ error: "MUX_ERROR", message: "Video processing failed" });
-            } else {
-              passThrough.destroy(err);
-            }
-          });
-
-        proc.pipe(passThrough);
-        passThrough.pipe(res);
-
-        req.on("close", () => {
-          videoOnly.destroy();
-          audioOnly.destroy();
-          proc.kill("SIGKILL");
-        });
-        return;
-      }
-
-      videoStream.pipe(res);
-
-      req.on("close", () => {
-        videoStream.destroy();
-      });
-    }
+    await downloadViaTempFile(normalised, format, quality, req, res);
+    req.log.info({ format }, "Download completed successfully");
   } catch (err) {
     req.log.error({ err }, "Download failed");
     if (!res.headersSent) {
@@ -447,23 +479,18 @@ router.get("/download", async (req: Request, res: Response) => {
   }
 });
 
-// ─── Playlist item download ────────────────────────────────────────────────
+// ─── Playlist item download (redirect to GET /download) ───────────────────────
 
-router.post("/download/playlist", async (req: Request, res: Response) => {
+router.post("/download/playlist", (req: Request, res: Response) => {
   const { url, format, quality } = req.body as {
     url?: string;
     format?: string;
     quality?: string;
   };
-
-  // Delegate to the same logic as single download by forwarding as query params
-  // We do this by constructing a fake query and re-using the handler logic
   if (!url || !format) {
     res.status(400).json({ error: "INVALID_REQUEST", message: "url and format are required" });
     return;
   }
-
-  // Redirect to GET /download with the same params so the streaming logic is reused
   const qs = new URLSearchParams({ url, format, ...(quality ? { quality } : {}) });
   res.redirect(`/api/download?${qs.toString()}`);
 });
