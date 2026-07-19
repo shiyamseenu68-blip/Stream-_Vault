@@ -153,8 +153,6 @@ async function ytdlpDumpJson(url: string): Promise<Record<string, any>> {
       "--dump-json",
       "--no-playlist",
       "--no-warnings",
-      "--extractor-args", "youtube:player_client=web_creator,web",
-      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       url,
     ],
     { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 },
@@ -305,7 +303,12 @@ router.post("/analyze", async (req: Request, res: Response) => {
     const errMsg =
       err instanceof Error ? err.message.toLowerCase() : "";
 
-    if (errMsg.includes("private video")) {
+    if (errMsg.includes("sign in to confirm") || errMsg.includes("not a bot")) {
+      res.status(403).json({
+        error: "BOT_DETECTED",
+        message: "YouTube is blocking automated requests. Please try again later.",
+      });
+    } else if (errMsg.includes("private video")) {
       res.status(404).json({
         error: "PRIVATE_VIDEO",
         message: "This video is private and cannot be accessed",
@@ -315,7 +318,7 @@ router.post("/analyze", async (req: Request, res: Response) => {
         error: "VIDEO_UNAVAILABLE",
         message: "This video is unavailable or has been removed",
       });
-    } else if (errMsg.includes("age")) {
+    } else if (errMsg.includes("age_restricted") || errMsg.includes("sign in to confirm your age")) {
       res.status(403).json({
         error: "AGE_RESTRICTED",
         message: "This video is age-restricted",
@@ -378,8 +381,6 @@ async function downloadViaTempFile(
 
   // yt-dlp args
   const args: string[] = [
-    "--extractor-args", "youtube:player_client=web_creator,web",
-    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "--no-playlist",
     "-o", tmpPath,
   ];
@@ -438,8 +439,6 @@ async function downloadViaTempFile(
     const { stdout } = await execFileAsync(
       YT_DLP,
       ["--print", "title", "--no-playlist", "--no-warnings",
-       "--extractor-args", "youtube:player_client=web_creator,web",
-       "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
        normalised],
       { timeout: 10_000 },
     );
