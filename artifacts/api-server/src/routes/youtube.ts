@@ -1,11 +1,10 @@
 /**
  * YouTube analyze and download routes.
- * - /analyze  : uses @distube/ytdl-core (metadata only — still works fine)
- * - /download : uses yt-dlp subprocess (replaces broken ytdl-core stream URLs)
+ * - /analyze  : uses yt-dlp --dump-json (works reliably on servers)
+ * - /download : uses yt-dlp subprocess
  */
 
 import { Router, type Request, type Response } from "express";
-import ytdl from "@distube/ytdl-core";
 import { spawn, execFile } from "child_process";
 import { promisify } from "util";
 import { createReadStream, unlink, stat } from "fs";
@@ -96,12 +95,15 @@ function formatViews(n: number): string {
   return String(n);
 }
 
-/** Best thumbnail URL from ytdl info. */
-function bestThumbnail(info: ytdl.videoInfo): string {
-  const thumbs = info.videoDetails.thumbnails;
-  if (!thumbs?.length) return "";
-  // sort by width descending, take best
-  return [...thumbs].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0].url;
+/** Best thumbnail URL from yt-dlp JSON. */
+function bestThumbnailFromYtdlp(info: Record<string, any>): string {
+  const thumbs = info.thumbnails;
+  if (!thumbs?.length) {
+    return info.thumbnail || "";
+  }
+  return [...thumbs].sort((a: any, b: any) => (b.width ?? 0) - (a.width ?? 0))[0]?.url
+    || info.thumbnail
+    || "";
 }
 
 /** Map quality string to ytdl quality filter. */
@@ -139,6 +141,25 @@ function deepFind(obj: any, targetKey: string, maxDepth: number): any {
 }
 
 // ─── Analyse ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run yt-dlp --dump-json to get video metadata as JSON.
+ * Works reliably on servers unlike ytdl-core which gets blocked.
+ */
+async function ytdlpDumpJson(url: string): Promise<Record<string, any>> {
+  const { stdout } = await execFileAsync(
+    YT_DLP,
+    [
+      "--dump-json",
+      "--no-playlist",
+      "--no-warnings",
+      "--extractor-args", "youtube:player_client=android",
+      url,
+    ],
+    { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 },
+  );
+  return JSON.parse(stdout.trim());
+}
 
 router.post("/analyze", async (req: Request, res: Response) => {
   const { url } = req.body as { url?: string };
@@ -255,28 +276,25 @@ router.post("/analyze", async (req: Request, res: Response) => {
 
   // ── Single video branch ────────────────────────────────────────────────────
   try {
-    const info = await ytdl.getInfo(normalised);
-    const details = info.videoDetails;
+    const info = await ytdlpDumpJson(normalised);
 
-    const durationSecs = parseInt(details.lengthSeconds, 10);
+    const durationSecs = info.duration || 0;
 
     res.json({
       type: "video",
-      videoId: details.videoId,
-      title: details.title,
-      thumbnail: bestThumbnail(info),
+      videoId: info.id,
+      title: info.title,
+      thumbnail: bestThumbnailFromYtdlp(info),
       duration: formatDuration(durationSecs),
       durationSeconds: durationSecs,
-      channel: details.author?.name ?? "Unknown",
-      channelUrl: details.author?.channel_url ?? null,
-      channelAvatar: details.author?.thumbnails?.[0]?.url ?? null,
-      subscribers: details.author?.subscriber_count
-        ? formatViews(details.author.subscriber_count)
-        : null,
-      viewCount: details.viewCount ? parseInt(details.viewCount, 10) : null,
-      uploadDate: details.publishDate ?? null,
-      description: details.description?.slice(0, 500) ?? null,
-      category: details.category ?? null,
+      channel: info.uploader || info.channel || "Unknown",
+      channelUrl: info.channel_url || info.uploader_url || null,
+      channelAvatar: null,
+      subscribers: null,
+      viewCount: info.view_count || null,
+      uploadDate: info.upload_date || null,
+      description: info.description?.slice(0, 500) || null,
+      category: info.categories?.[0] || null,
       isShort: isShortUrl(normalised),
       url: normalised,
     });
