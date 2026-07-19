@@ -2,7 +2,7 @@
   "buildCommand": "pnpm --filter @workspace/streamvault run build",
   "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": null,
-  "outputDirectory": "artifacts/streamvault/dist/public",
+  "outputDirectory": "dist/public",
   "rewrites": [
     {
       "source": "/((?!assets/|favicon\\.svg|robots\\.txt).*)",
