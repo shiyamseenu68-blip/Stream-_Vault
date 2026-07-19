@@ -16,7 +16,9 @@ import { randomBytes } from "crypto";
 const execFileAsync = promisify(execFile);
 const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
-const YT_DLP = "yt-dlp";
+const YT_DLP = process.platform === "win32" 
+  ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
+  : "yt-dlp";
 
 const router = Router();
 
@@ -354,7 +356,7 @@ async function downloadViaTempFile(
 
   // yt-dlp args
   const args: string[] = [
-    "--extractor-args", "youtube:player_client=ios",
+    "--extractor-args", "youtube:player_client=android",
     "--no-playlist",
     "-o", tmpPath,
   ];
@@ -413,7 +415,7 @@ async function downloadViaTempFile(
     const { stdout } = await execFileAsync(
       YT_DLP,
       ["--print", "title", "--no-playlist", "--no-warnings",
-       "--extractor-args", "youtube:player_client=ios", normalised],
+       "--extractor-args", "youtube:player_client=android", normalised],
       { timeout: 10_000 },
     );
     titleRaw = stdout.trim() || "video";
