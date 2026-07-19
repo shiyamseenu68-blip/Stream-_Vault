@@ -23,7 +23,8 @@ export default function PlaylistItemCard({ item, index }: PlaylistItemCardProps)
       params.append('quality', selectedQuality);
     }
 
-    const downloadUrl = `/api/download/playlist?${params.toString()}`;
+    // Use GET /api/download directly — POST /api/download/playlist only redirects here anyway
+    const downloadUrl = `/api/download?${params.toString()}`;
     
     const a = document.createElement('a');
     a.href = downloadUrl;

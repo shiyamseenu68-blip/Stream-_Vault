@@ -111,6 +111,21 @@ function safeFilename(name: string): string {
   return name.replace(/[/\\?%*:|"<>]/g, "-").slice(0, 200);
 }
 
+/**
+ * Recursively walk an object up to `maxDepth` levels deep looking for the
+ * first occurrence of a key named `targetKey`. Returns the value or null.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function deepFind(obj: any, targetKey: string, maxDepth: number): any {
+  if (!obj || typeof obj !== "object" || maxDepth <= 0) return null;
+  if (Object.prototype.hasOwnProperty.call(obj, targetKey)) return obj[targetKey];
+  for (const val of Object.values(obj)) {
+    const found = deepFind(val, targetKey, maxDepth - 1);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
 // ─── Analyse ─────────────────────────────────────────────────────────────────
 
 router.post("/analyze", async (req: Request, res: Response) => {
@@ -138,115 +153,81 @@ router.post("/analyze", async (req: Request, res: Response) => {
       const parsed = new URL(normalised);
       const listId = parsed.searchParams.get("list")!;
 
-      // ytdl can't enumerate playlists — use YouTube's oEmbed + page scraping
-      // approach via the public playlist page to grab basic metadata, then
-      // for each video in the playlist we rely on the per-video API.
-      // Since ytdl-core doesn't expose a playlist enumeration API, we use
-      // the undocumented YouTube internal endpoint.
-      const playlistApiUrl =
-        `https://www.youtube.com/playlist?list=${listId}`;
-
-      // Fetch playlist page and parse initial data
-      const pageRes = await fetch(playlistApiUrl, {
+      // YouTube's public RSS feed — reliable, no bot-detection, no auth needed.
+      // Returns up to ~100 videos; no duration data available via RSS.
+      const rssUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${listId}`;
+      const rssRes = await fetch(rssUrl, {
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.9",
+          "User-Agent": "Mozilla/5.0 (compatible; StreamVault/1.0)",
+          "Accept": "application/xml,text/xml,*/*",
         },
       });
 
-      if (!pageRes.ok) {
-        throw new Error(`Failed to fetch playlist page: ${pageRes.status}`);
+      if (!rssRes.ok) {
+        throw new Error(
+          `Playlist not found or private (RSS status ${rssRes.status}). ` +
+          `Check that the playlist is public and the URL is correct.`
+        );
       }
 
-      const html = await pageRes.text();
+      const xml = await rssRes.text();
 
-      // Extract ytInitialData from page
-      const match = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s);
-      if (!match) {
-        throw new Error("Could not parse playlist data from YouTube");
-      }
+      // ── Parse XML without a DOM parser (no dependency needed) ─────────────
+      const tagText = (tag: string, src = xml): string => {
+        const m = src.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
+        return m ? m[1].trim() : "";
+      };
+      const attr = (attrName: string, src: string): string => {
+        const m = src.match(new RegExp(`${attrName}="([^"]*)"`));
+        return m ? m[1] : "";
+      };
 
-      const data = JSON.parse(match[1]);
+      // Top-level feed metadata
+      // <title> appears twice: feed title first, then inside each entry — take first
+      const feedTitle = xml.match(/<title>([^<]*)<\/title>/)?.[1]?.trim() ?? "Unknown Playlist";
+      const feedAuthor = tagText("name", xml.match(/<author>([\s\S]*?)<\/author>/)?.[0] ?? "") || null;
 
-      // Navigate the deeply nested structure
-      const header =
-        data?.header?.playlistHeaderRenderer ??
-        data?.header?.gridVideoRenderer;
+      // Extract every <entry> block
+      const entryMatches = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)];
 
-      const sidebar =
-        data?.sidebar?.playlistSidebarRenderer?.items?.[0]
-          ?.playlistSidebarPrimaryInfoRenderer;
+      const videos = entryMatches.map((m) => {
+        const entry = m[1];
+        const videoId = tagText("yt:videoId", entry);
+        const title = tagText("title", entry).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+        const link = attr("href", entry.match(/<link [^>]*rel="alternate"[^>]*>/)?.[0] ?? "");
+        // Best thumbnail: media:thumbnail url attribute
+        const thumbMatch = entry.match(/<media:thumbnail[^>]*url="([^"]+)"/);
+        const thumbnail = thumbMatch?.[1] ?? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+        const channel = tagText("name", entry.match(/<author>([\s\S]*?)<\/author>/)?.[0] ?? "") || null;
+        const views = parseInt(entry.match(/statistics views="(\d+)"/)?.[1] ?? "0", 10);
 
-      const titleRuns =
-        sidebar?.title?.runs?.[0]?.text ??
-        header?.title?.runs?.[0]?.text ??
-        "Unknown Playlist";
-
-      const ownerRuns =
-        sidebar?.videoOwner?.videoOwnerRenderer?.title?.runs?.[0]?.text ??
-        data?.sidebar?.playlistSidebarRenderer?.items?.[1]
-          ?.playlistSidebarSecondaryInfoRenderer
-          ?.videoOwner?.videoOwnerRenderer?.title?.runs?.[0]?.text ??
-        null;
-
-      // Extract videos from the playlist content
-      const contents =
-        data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]
-          ?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]
-          ?.itemSectionRenderer?.contents?.[0]
-          ?.playlistVideoListRenderer?.contents ?? [];
-
-      interface PlaylistVideoRenderer {
-        playlistVideoRenderer?: {
-          videoId?: string;
-          title?: { runs?: Array<{ text: string }> };
-          thumbnail?: { thumbnails?: Array<{ url: string; width?: number }> };
-          lengthSeconds?: string;
-          shortBylineText?: { runs?: Array<{ text: string }> };
+        return {
+          videoId,
+          title,
+          thumbnail,
+          duration: "0:00",          // RSS doesn't include duration
+          durationSeconds: 0,
+          channel,
+          views: views > 0 ? formatViews(views) : null,
+          url: link || `https://www.youtube.com/watch?v=${videoId}&list=${listId}`,
         };
-      }
+      }).filter((v) => v.videoId);
 
-      const videos = (contents as PlaylistVideoRenderer[])
-        .filter((c) => c.playlistVideoRenderer?.videoId)
-        .map((c) => {
-          const v = c.playlistVideoRenderer!;
-          const vId = v.videoId!;
-          const titleText = v.title?.runs?.[0]?.text ?? "Unknown";
-          const thumb =
-            v.thumbnail?.thumbnails?.sort(
-              (a, b) => (b.width ?? 0) - (a.width ?? 0),
-            )?.[0]?.url ?? `https://img.youtube.com/vi/${vId}/hqdefault.jpg`;
-          const secs = parseInt(v.lengthSeconds ?? "0", 10);
-          const channel = v.shortBylineText?.runs?.[0]?.text ?? null;
+      req.log.info({ count: videos.length, listId }, "Playlist RSS parsed");
 
-          return {
-            videoId: vId,
-            title: titleText,
-            thumbnail: thumb,
-            duration: formatDuration(secs),
-            durationSeconds: secs,
-            channel,
-            url: `https://www.youtube.com/watch?v=${vId}`,
-          };
-        });
-
-      const totalSecs = videos.reduce((s, v) => s + v.durationSeconds, 0);
-
-      // Try to get playlist thumbnail from first video
       const thumbnail =
         videos[0]?.thumbnail ??
-        `https://img.youtube.com/vi/${videos[0]?.videoId ?? "default"}/hqdefault.jpg`;
+        `https://img.youtube.com/vi/default/hqdefault.jpg`;
 
       res.json({
         type: "playlist",
         playlistId: listId,
-        title: titleRuns,
+        title: feedTitle,
         thumbnail,
         videoCount: videos.length,
-        totalDuration: formatDuration(totalSecs),
-        totalDurationSeconds: totalSecs,
-        creator: ownerRuns,
+        totalDuration: "N/A",
+        totalDurationSeconds: 0,
+        creator: feedAuthor,
         url: normalised,
         videos,
       });
