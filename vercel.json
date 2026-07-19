@@ -3,9 +3,5 @@
   "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": null,
   "outputDirectory": "artifacts/streamvault/dist/public",
-  "devCommand": "pnpm --filter @workspace/streamvault run dev",
-  "buildEnv": {
-    "PORT": "5000",
-    "BASE_PATH": "/"
-  }
+  "devCommand": "pnpm --filter @workspace/streamvault run dev"
 }
