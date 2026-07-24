@@ -1,4 +1,6 @@
 export default async function handler(req: any, res: any) {
+  console.log('API analyze called:', req.method, req.url);
+  
   // Handle CORS
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -19,6 +21,7 @@ export default async function handler(req: any, res: any) {
 
   try {
     const { url } = req.body;
+    console.log('Request body url:', url);
 
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ error: 'INVALID_REQUEST', message: 'URL is required' });
@@ -28,16 +31,23 @@ export default async function handler(req: any, res: any) {
     const playlistMatch = url.match(/[?&]list=([^&]+)/);
     if (playlistMatch) {
       const playlistId = playlistMatch[1];
-      return await analyzePlaylist(playlistId, url);
+      console.log('Detected playlist:', playlistId);
+      const result = await analyzePlaylist(playlistId, url);
+      console.log('Playlist analysis result:', result.type, result.videoCount);
+      return res.status(200).json(result);
     }
 
     // Check if it's a video URL
     const videoMatch = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
     if (videoMatch) {
       const videoId = videoMatch[1];
-      return await analyzeVideo(videoId, url);
+      console.log('Detected video:', videoId);
+      const result = await analyzeVideo(videoId, url);
+      console.log('Video analysis result:', result.type, result.title);
+      return res.status(200).json(result);
     }
 
+    console.log('Invalid URL detected');
     return res.status(400).json({ 
       error: 'INVALID_URL', 
       message: 'Please provide a valid YouTube URL' 
@@ -53,6 +63,7 @@ export default async function handler(req: any, res: any) {
 
 async function analyzePlaylist(playlistId: string, originalUrl: string) {
   try {
+    console.log('Fetching RSS feed for playlist:', playlistId);
     // Use YouTube RSS feed for playlist analysis
     const rssUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${playlistId}`;
     const response = await fetch(rssUrl);
@@ -62,6 +73,7 @@ async function analyzePlaylist(playlistId: string, originalUrl: string) {
     }
 
     const xmlText = await response.text();
+    console.log('RSS feed received, length:', xmlText.length);
     
     // Parse XML to extract playlist info
     const titleMatch = xmlText.match(/<title>([^<]+)<\/title>/);
@@ -69,6 +81,8 @@ async function analyzePlaylist(playlistId: string, originalUrl: string) {
     
     const videoMatches = xmlText.matchAll(/<yt:videoId>([^<]+)<\/yt:videoId>/g);
     const videoIds = Array.from(videoMatches).map(m => m[1]);
+    
+    console.log('Found videos in playlist:', videoIds.length);
     
     if (videoIds.length === 0) {
       throw new Error('No videos found in playlist');
@@ -98,6 +112,7 @@ async function analyzePlaylist(playlistId: string, originalUrl: string) {
       videos
     };
   } catch (error) {
+    console.error('Playlist analysis error:', error);
     throw new Error(`Failed to analyze playlist: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
