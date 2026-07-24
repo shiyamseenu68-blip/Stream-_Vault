@@ -245,9 +245,45 @@ router.post("/analyze", async (req: Request, res: Response) => {
       return;
     } catch (err) {
       req.log.error({ err }, "Playlist analysis failed");
-      const message =
-        err instanceof Error ? err.message : "Failed to analyse playlist";
-      res.status(500).json({ error: "PLAYLIST_ERROR", message });
+      
+      if (err instanceof Error) {
+        const message = err.message.toLowerCase();
+        
+        if (message.includes("404") || message.includes("not found")) {
+          res.status(404).json({
+            error: "PLAYLIST_NOT_FOUND",
+            message: "Playlist not found or private. Check that the playlist is public and the URL is correct."
+          });
+          return;
+        }
+        
+        if (message.includes("network") || message.includes("fetch")) {
+          res.status(503).json({
+            error: "NETWORK_ERROR",
+            message: "Failed to fetch playlist data. Please check your internet connection and try again."
+          });
+          return;
+        }
+        
+        if (message.includes("parse") || message.includes("xml")) {
+          res.status(500).json({
+            error: "PARSE_ERROR",
+            message: "Failed to parse playlist data. The playlist format may be invalid."
+          });
+          return;
+        }
+        
+        // Generic error with the actual message
+        res.status(500).json({
+          error: "PLAYLIST_ERROR",
+          message: err.message || "Failed to analyse playlist"
+        });
+      } else {
+        res.status(500).json({
+          error: "PLAYLIST_ERROR",
+          message: "Failed to analyse playlist due to an unknown error"
+        });
+      }
       return;
     }
   }
