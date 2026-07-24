@@ -1,9 +1,8 @@
 {
-  "buildCommand": "pnpm run build",
+  "buildCommand": "pnpm --filter @workspace/streamvault run build",
   "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": "vite",
-  "outputDirectory": "dist",
-  "rootDirectory": "artifacts/streamvault",
+  "outputDirectory": "artifacts/streamvault/dist",
   "rewrites": [
     {
       "source": "/((?!assets/|favicon\\.svg|robots\\.txt).*)",
