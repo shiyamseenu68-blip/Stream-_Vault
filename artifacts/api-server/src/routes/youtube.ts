@@ -1,11 +1,10 @@
 /**
  * YouTube analyze and download routes.
- * - /analyze  : uses @distube/ytdl-core (metadata only — still works fine)
- * - /download : uses yt-dlp subprocess (replaces broken ytdl-core stream URLs)
+ * - /analyze  : uses yt-dlp --dump-json (works reliably on servers)
+ * - /download : uses yt-dlp subprocess
  */
 
 import { Router, type Request, type Response } from "express";
-import ytdl from "@distube/ytdl-core";
 import { spawn, execFile } from "child_process";
 import { promisify } from "util";
 import { createReadStream, unlink, stat } from "fs";
@@ -16,9 +15,10 @@ import { randomBytes } from "crypto";
 const execFileAsync = promisify(execFile);
 const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
-const YT_DLP = process.platform === "win32" 
-  ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
-  : "yt-dlp";
+const YT_DLP = process.env.YT_DLP_PATH
+  || (process.platform === "win32"
+    ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
+    : "yt-dlp");
 
 const router = Router();
 
@@ -95,12 +95,15 @@ function formatViews(n: number): string {
   return String(n);
 }
 
-/** Best thumbnail URL from ytdl info. */
-function bestThumbnail(info: ytdl.videoInfo): string {
-  const thumbs = info.videoDetails.thumbnails;
-  if (!thumbs?.length) return "";
-  // sort by width descending, take best
-  return [...thumbs].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0].url;
+/** Best thumbnail URL from yt-dlp JSON. */
+function bestThumbnailFromYtdlp(info: Record<string, any>): string {
+  const thumbs = info.thumbnails;
+  if (!thumbs?.length) {
+    return info.thumbnail || "";
+  }
+  return [...thumbs].sort((a: any, b: any) => (b.width ?? 0) - (a.width ?? 0))[0]?.url
+    || info.thumbnail
+    || "";
 }
 
 /** Map quality string to ytdl quality filter. */
@@ -138,6 +141,53 @@ function deepFind(obj: any, targetKey: string, maxDepth: number): any {
 }
 
 // ─── Analyse ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run yt-dlp --dump-json to get video metadata as JSON.
+ * Works reliably on servers unlike ytdl-core which gets blocked.
+ */
+async function ytdlpDumpJson(url: string): Promise<Record<string, any>> {
+  // Try multiple player clients with fallback
+  const clients = ["tv", "mweb", "web"];
+  const cookies = process.env.YOUTUBE_COOKIES;
+
+  for (const client of clients) {
+    try {
+      const args = [
+        "--dump-json",
+        "--no-playlist",
+        "--no-warnings",
+        "--extractor-args", `youtube:player_client=${client}`,
+      ];
+
+      if (cookies) {
+        args.push("--cookies", cookies);
+      }
+
+      args.push(url);
+
+      const { stdout } = await execFileAsync(YT_DLP, args, {
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return JSON.parse(stdout.trim());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      // If bot detection or this client failed, try next
+      if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
+        continue;
+      }
+      // Other errors (invalid URL, private video, etc.) — throw immediately
+      throw err;
+    }
+  }
+
+  // All clients failed — throw with helpful message
+  throw new Error(
+    "YouTube is blocking automated requests from this server. " +
+    "Set YOUTUBE_COOKIES env var with a cookies.txt file path to bypass this."
+  );
+}
 
 router.post("/analyze", async (req: Request, res: Response) => {
   const { url } = req.body as { url?: string };
@@ -290,28 +340,25 @@ router.post("/analyze", async (req: Request, res: Response) => {
 
   // ── Single video branch ────────────────────────────────────────────────────
   try {
-    const info = await ytdl.getInfo(normalised);
-    const details = info.videoDetails;
+    const info = await ytdlpDumpJson(normalised);
 
-    const durationSecs = parseInt(details.lengthSeconds, 10);
+    const durationSecs = info.duration || 0;
 
     res.json({
       type: "video",
-      videoId: details.videoId,
-      title: details.title,
-      thumbnail: bestThumbnail(info),
+      videoId: info.id,
+      title: info.title,
+      thumbnail: bestThumbnailFromYtdlp(info),
       duration: formatDuration(durationSecs),
       durationSeconds: durationSecs,
-      channel: details.author?.name ?? "Unknown",
-      channelUrl: details.author?.channel_url ?? null,
-      channelAvatar: details.author?.thumbnails?.[0]?.url ?? null,
-      subscribers: details.author?.subscriber_count
-        ? formatViews(details.author.subscriber_count)
-        : null,
-      viewCount: details.viewCount ? parseInt(details.viewCount, 10) : null,
-      uploadDate: details.publishDate ?? null,
-      description: details.description?.slice(0, 500) ?? null,
-      category: details.category ?? null,
+      channel: info.uploader || info.channel || "Unknown",
+      channelUrl: info.channel_url || info.uploader_url || null,
+      channelAvatar: null,
+      subscribers: null,
+      viewCount: info.view_count || null,
+      uploadDate: info.upload_date || null,
+      description: info.description?.slice(0, 500) || null,
+      category: info.categories?.[0] || null,
       isShort: isShortUrl(normalised),
       url: normalised,
     });
@@ -321,7 +368,12 @@ router.post("/analyze", async (req: Request, res: Response) => {
     const errMsg =
       err instanceof Error ? err.message.toLowerCase() : "";
 
-    if (errMsg.includes("private video")) {
+    if (errMsg.includes("sign in to confirm") || errMsg.includes("not a bot")) {
+      res.status(403).json({
+        error: "BOT_DETECTED",
+        message: "YouTube is blocking automated requests. Please try again later.",
+      });
+    } else if (errMsg.includes("private video")) {
       res.status(404).json({
         error: "PRIVATE_VIDEO",
         message: "This video is private and cannot be accessed",
@@ -331,7 +383,7 @@ router.post("/analyze", async (req: Request, res: Response) => {
         error: "VIDEO_UNAVAILABLE",
         message: "This video is unavailable or has been removed",
       });
-    } else if (errMsg.includes("age")) {
+    } else if (errMsg.includes("age_restricted") || errMsg.includes("sign in to confirm your age")) {
       res.status(403).json({
         error: "AGE_RESTRICTED",
         message: "This video is age-restricted",
@@ -342,9 +394,11 @@ router.post("/analyze", async (req: Request, res: Response) => {
         message: "This video is blocked due to copyright restrictions",
       });
     } else {
+      const detail = err instanceof Error ? err.message : "Unknown error";
+      req.log.error({ detail }, "Video analysis failed - detail");
       res.status(500).json({
         error: "ANALYSIS_FAILED",
-        message: "Failed to analyse this video. It may be unavailable in your region.",
+        message: `Failed to analyse this video: ${detail}`,
       });
     }
   }
@@ -391,11 +445,15 @@ async function downloadViaTempFile(
   const tmpPath = join(tmpdir(), `sv_${id}.${ext}`);
 
   // yt-dlp args
+  const cookies = process.env.YOUTUBE_COOKIES;
   const args: string[] = [
-    "--extractor-args", "youtube:player_client=android",
     "--no-playlist",
     "-o", tmpPath,
   ];
+
+  if (cookies) {
+    args.push("--cookies", cookies);
+  }
 
   if (format === "audio") {
     args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
@@ -451,7 +509,7 @@ async function downloadViaTempFile(
     const { stdout } = await execFileAsync(
       YT_DLP,
       ["--print", "title", "--no-playlist", "--no-warnings",
-       "--extractor-args", "youtube:player_client=android", normalised],
+       normalised],
       { timeout: 10_000 },
     );
     titleRaw = stdout.trim() || "video";
