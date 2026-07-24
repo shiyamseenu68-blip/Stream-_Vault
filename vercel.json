@@ -5,7 +5,11 @@
   "outputDirectory": "artifacts/streamvault/dist",
   "rewrites": [
     {
-      "source": "/((?!assets/|favicon\\.svg|robots\\.txt).*)",
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/((?!assets/|favicon\\.svg|robots\\.txt|api).*)",
       "destination": "/index.html"
     }
   ]
