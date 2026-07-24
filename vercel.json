@@ -1,8 +1,8 @@
 {
-  "buildCommand": "pnpm --filter @workspace/streamvault run build",
+  "buildCommand": "pnpm --filter @workspace/streamvault run build && node scripts/copy-dist.js",
   "installCommand": "pnpm install --no-frozen-lockfile",
   "framework": null,
-  "outputDirectory": "artifacts/streamvault/dist",
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/:path*",
