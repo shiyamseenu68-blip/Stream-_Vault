@@ -7,7 +7,7 @@
 import { Router, type Request, type Response } from "express";
 import { spawn, execFile } from "child_process";
 import { promisify } from "util";
-import { createReadStream, unlink, stat } from "fs";
+import { createReadStream, unlink, stat, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
@@ -146,47 +146,59 @@ function deepFind(obj: any, targetKey: string, maxDepth: number): any {
  * Run yt-dlp --dump-json to get video metadata as JSON.
  * Works reliably on servers unlike ytdl-core which gets blocked.
  */
-async function ytdlpDumpJson(url: string): Promise<Record<string, any>> {
-  // Try multiple player clients with fallback
-  const clients = ["tv", "mweb", "web"];
+async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<Record<string, any>> {
   const cookies = process.env.YOUTUBE_COOKIES;
 
-  for (const client of clients) {
-    try {
-      const args = [
-        "--dump-json",
-        "--no-playlist",
-        "--no-warnings",
-        "--extractor-args", `youtube:player_client=${client}`,
-      ];
+  // Base args - don't use player_client to avoid DRM issues
+  const args = [
+    "--dump-json",
+    "--no-warnings",
+  ];
 
-      if (cookies) {
-        args.push("--cookies", cookies);
-      }
-
-      args.push(url);
-
-      const { stdout } = await execFileAsync(YT_DLP, args, {
-        timeout: 30_000,
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      return JSON.parse(stdout.trim());
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "";
-      // If bot detection or this client failed, try next
-      if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
-        continue;
-      }
-      // Other errors (invalid URL, private video, etc.) — throw immediately
-      throw err;
-    }
+  // Only add --no-playlist for single videos, not playlists
+  if (!isPlaylist) {
+    args.push("--no-playlist");
   }
 
-  // All clients failed — throw with helpful message
-  throw new Error(
-    "YouTube is blocking automated requests from this server. " +
-    "Set YOUTUBE_COOKIES env var with a cookies.txt file path to bypass this."
-  );
+  if (cookies) {
+    args.push("--cookies", cookies);
+  }
+
+  args.push(url);
+
+  try {
+    const { stdout } = await execFileAsync(YT_DLP, args, {
+      timeout: 30_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return JSON.parse(stdout.trim());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    
+    // Handle specific error cases with user-friendly messages
+    if (msg.includes("DRM protected") || msg.includes("This video is DRM protected")) {
+      throw new Error("This video is DRM protected and cannot be downloaded");
+    }
+    
+    if (msg.includes("Private video") || msg.includes("private video")) {
+      throw new Error("This video is private and cannot be accessed");
+    }
+    
+    if (msg.includes("unavailable") || msg.includes("removed")) {
+      throw new Error("This video is unavailable or has been removed");
+    }
+    
+    if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
+      throw new Error("YouTube is blocking automated requests. Please try again later or configure YOUTUBE_COOKIES");
+    }
+    
+    if (msg.includes("format is not available") || msg.includes("Requested format")) {
+      throw new Error("The requested format is not available for this video");
+    }
+    
+    // Generic error with original message
+    throw new Error(`Failed to fetch video information: ${msg}`);
+  }
 }
 
 router.post("/analyze", async (req: Request, res: Response) => {
@@ -340,7 +352,7 @@ router.post("/analyze", async (req: Request, res: Response) => {
 
   // ── Single video branch ────────────────────────────────────────────────────
   try {
-    const info = await ytdlpDumpJson(normalised);
+    const info = await ytdlpDumpJson(normalised, false);
 
     const durationSecs = info.duration || 0;
 
@@ -365,40 +377,33 @@ router.post("/analyze", async (req: Request, res: Response) => {
   } catch (err) {
     req.log.error({ err }, "Video analysis failed");
 
-    const errMsg =
-      err instanceof Error ? err.message.toLowerCase() : "";
-
-    if (errMsg.includes("sign in to confirm") || errMsg.includes("not a bot")) {
+    const detail = err instanceof Error ? err.message : "Unknown error";
+    
+    // Return user-friendly error messages based on the error type
+    if (detail.includes("DRM protected")) {
       res.status(403).json({
-        error: "BOT_DETECTED",
-        message: "YouTube is blocking automated requests. Please try again later.",
+        error: "DRM_PROTECTED",
+        message: detail,
       });
-    } else if (errMsg.includes("private video")) {
+    } else if (detail.includes("private video")) {
       res.status(404).json({
         error: "PRIVATE_VIDEO",
-        message: "This video is private and cannot be accessed",
+        message: detail,
       });
-    } else if (errMsg.includes("unavailable") || errMsg.includes("removed")) {
+    } else if (detail.includes("unavailable") || detail.includes("removed")) {
       res.status(404).json({
         error: "VIDEO_UNAVAILABLE",
-        message: "This video is unavailable or has been removed",
+        message: detail,
       });
-    } else if (errMsg.includes("age_restricted") || errMsg.includes("sign in to confirm your age")) {
+    } else if (detail.includes("sign in") || detail.includes("not a bot")) {
       res.status(403).json({
-        error: "AGE_RESTRICTED",
-        message: "This video is age-restricted",
-      });
-    } else if (errMsg.includes("copyright")) {
-      res.status(403).json({
-        error: "COPYRIGHT",
-        message: "This video is blocked due to copyright restrictions",
+        error: "BOT_DETECTED",
+        message: detail,
       });
     } else {
-      const detail = err instanceof Error ? err.message : "Unknown error";
-      req.log.error({ detail }, "Video analysis failed - detail");
       res.status(500).json({
         error: "ANALYSIS_FAILED",
-        message: `Failed to analyse this video: ${detail}`,
+        message: detail,
       });
     }
   }
@@ -406,7 +411,7 @@ router.post("/analyze", async (req: Request, res: Response) => {
 
 // ─── yt-dlp helpers ──────────────────────────────────────────────────────────
 
-/** Map quality string → yt-dlp -f selector (HLS-compatible, no ext=mp4 filter). */
+/** Map quality string → yt-dlp -f selector (single format to avoid ffmpeg requirement). */
 function ytdlpVideoFormat(quality?: string): string {
   const heightMap: Record<string, number> = {
     "1080p": 1080, "720p": 720, "480p": 480,
@@ -414,12 +419,13 @@ function ytdlpVideoFormat(quality?: string): string {
   };
   const h = quality ? heightMap[quality] : undefined;
   if (quality === "lowest") {
-    return "worstvideo+worstaudio/worst";
+    return "worst";
   }
   if (h) {
-    return `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]/best`;
+    // Use single format to avoid needing ffmpeg for merging
+    return `best[height<=${h}]/best`;
   }
-  return "bestvideo+bestaudio/best";
+  return "best";
 }
 
 /**
@@ -444,6 +450,8 @@ async function downloadViaTempFile(
   const ext = format === "audio" ? "mp3" : "mp4";
   const tmpPath = join(tmpdir(), `sv_${id}.${ext}`);
 
+  req.log.info({ tmpPath }, "Download temp path");
+
   // yt-dlp args
   const cookies = process.env.YOUTUBE_COOKIES;
   const args: string[] = [
@@ -458,10 +466,7 @@ async function downloadViaTempFile(
   if (format === "audio") {
     args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
   } else {
-    args.push(
-      "-f", ytdlpVideoFormat(quality),
-      "--merge-output-format", "mp4",
-    );
+    args.push("-f", ytdlpVideoFormat(quality));
   }
 
   args.push(normalised);
@@ -499,9 +504,30 @@ async function downloadViaTempFile(
     });
   });
 
+  // Check if file exists at expected path
+  req.log.info({ tmpPath, exists: existsSync(tmpPath) }, "File existence check after yt-dlp");
+  
+  // If file doesn't exist at expected path, try to find it using glob
+  let actualPath = tmpPath;
+  if (!existsSync(tmpPath)) {
+    req.log.warn({ tmpPath }, "File not found at expected path, searching temp directory");
+    // Try to find any file with the same ID
+    const { readdir } = await import("fs/promises");
+    const files = await readdir(tmpdir());
+    const matchingFile = files.find(f => f.startsWith(`sv_${id}`));
+    if (matchingFile) {
+      actualPath = join(tmpdir(), matchingFile);
+      req.log.info({ actualPath }, "Found file at alternative path");
+    } else {
+      throw new Error(`Downloaded file not found. Expected: ${tmpPath}`);
+    }
+  }
+
   // Stream the completed file to the browser
-  const { size } = await statAsync(tmpPath);
+  const { size } = await statAsync(actualPath);
   const mimeType = format === "audio" ? "audio/mpeg" : "video/mp4";
+
+  req.log.info({ actualPath, size, mimeType }, "Streaming file to response");
 
   // Get title from yt-dlp metadata (fast, already cached after download)
   let titleRaw = "video";
@@ -523,16 +549,22 @@ async function downloadViaTempFile(
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", "no-store");
 
-  const fileStream = createReadStream(tmpPath);
+  const fileStream = createReadStream(actualPath);
   fileStream.pipe(res);
 
-  // Clean up temp file once the response is done
+  // Clean up temp file only after response finishes successfully
   res.on("finish", () => {
-    unlinkAsync(tmpPath).catch(() => {/* ignore cleanup errors */});
+    req.log.info({ actualPath }, "Download finished, cleaning up temp file");
+    unlinkAsync(actualPath).catch(() => {/* ignore cleanup errors */});
   });
+  
+  // Clean up on client disconnect or error
   res.on("close", () => {
     fileStream.destroy();
-    unlinkAsync(tmpPath).catch(() => {/* ignore */});
+    if (!res.writableEnded) {
+      req.log.info({ actualPath }, "Response closed before finish, cleaning up temp file");
+      unlinkAsync(actualPath).catch(() => {/* ignore */});
+    }
   });
 }
 

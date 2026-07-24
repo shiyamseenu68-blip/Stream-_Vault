@@ -51,8 +51,6 @@ export default function DownloadButton({
     // Create an invisible anchor to trigger download without replacing current page
     const a = document.createElement('a');
     a.href = downloadUrl;
-    a.target = '_blank';
-    a.download = '';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

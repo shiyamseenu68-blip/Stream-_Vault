@@ -39,9 +39,6 @@ function useBulkDownload(videos: PlaylistItem[]) {
         });
         const a = document.createElement('a');
         a.href = `/api/download?${params.toString()}`;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        a.download = '';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
