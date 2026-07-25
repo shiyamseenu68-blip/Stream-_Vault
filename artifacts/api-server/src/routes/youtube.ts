@@ -409,31 +409,41 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
     "mweb"
   ];
 
-  for (const playerClient of playerClients) {
-    logger.info({ playerClient }, `Trying with player client: ${playerClient}`);
+  // Try without cookies first (for public videos), then with cookies (for age-gated videos)
+  const cookieStrategies = [
+    { useCookies: false, description: "without cookies" },
+    { useCookies: true, description: "with cookies" }
+  ];
 
-    // Base args with anti-bot detection measures
-    const args = [
-      "--ignore-config",  // Prevent reading config files that might have format settings
-      "--dump-json",
-      "--no-warnings",
-      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "--referer", "https://www.youtube.com/",
-      "--extractor-args", `youtube:player_client=${playerClient}`,
-      "--no-check-certificates",
-    ];
+  for (const cookieStrategy of cookieStrategies) {
+    logger.info({ strategy: cookieStrategy.description }, `Trying extraction ${cookieStrategy.description}`);
 
-    // Only add --no-playlist for single videos, not playlists
-    if (!isPlaylist) {
-      args.push("--no-playlist");
-    }
+    for (const playerClient of playerClients) {
+      logger.info({ playerClient, useCookies: cookieStrategy.useCookies }, `Trying with player client: ${playerClient}`);
 
-    if (cookiesContent) {
-      cookiesPath = await writeCookiesToTempFile(cookiesContent);
-      args.push("--cookies", cookiesPath);
-    }
+      // Base args with anti-bot detection measures
+      const args = [
+        "--ignore-config",  // Prevent reading config files that might have format settings
+        "--dump-json",
+        "--no-warnings",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--referer", "https://www.youtube.com/",
+        "--extractor-args", `youtube:player_client=${playerClient}`,
+        "--no-check-certificates",
+      ];
 
-    args.push(url);
+      // Only add --no-playlist for single videos, not playlists
+      if (!isPlaylist) {
+        args.push("--no-playlist");
+      }
+
+      // Only add cookies if this strategy requires them and cookies are available
+      if (cookieStrategy.useCookies && cookiesContent) {
+        cookiesPath = await writeCookiesToTempFile(cookiesContent);
+        args.push("--cookies", cookiesPath);
+      }
+
+      args.push(url);
 
     console.log("=== YTDLP ARGS DEBUG ===");
     console.log("Full args array:", JSON.stringify(args, null, 2));
@@ -479,56 +489,47 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
       const msg = err instanceof Error ? err.message : "";
       
       // Log the full error for debugging
-      logger.error({ error: msg, hasCookies: !!cookiesContent, cookiesPath, playerClient }, `yt-dlp execution failed with player client: ${playerClient}`);
+      logger.error({ error: msg, hasCookies: !!cookiesContent, cookiesPath, playerClient, useCookies: cookieStrategy.useCookies }, `yt-dlp execution failed with player client: ${playerClient}`);
       
-      // If this is the last attempt, throw the error
-      if (playerClient === playerClients[playerClients.length - 1]) {
-        // Handle specific error cases with user-friendly messages
-        if (msg.includes("DRM protected") || msg.includes("This video is DRM protected")) {
-          throw new Error("This video is DRM protected and cannot be downloaded");
-        }
-        
-        if (msg.includes("Private video") || msg.includes("private video")) {
-          throw new Error("This video is private and cannot be accessed");
-        }
-        
-        if (msg.includes("unavailable") || msg.includes("removed")) {
-          throw new Error("This video is unavailable or has been removed");
-        }
-        
-        if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
-          // For analyze endpoint, try to proceed without auth cookies
-          // This may fail for age-gated or private videos, but works for public videos
-          logger.warn({ error: msg, playerClient }, "YouTube blocking requests due to missing auth - may still work for public videos");
-          // Don't throw error - let it try other player clients or return partial data
-          if (playerClient === playerClients[playerClients.length - 1]) {
-            // Last attempt failed - throw a more informative error
-            throw new Error("YouTube requires authentication for this video. For age-gated or private videos, please add SAPISID or __Secure-3PAPISID cookies. For public videos, this error should not occur.");
-          }
-          continue;
-        }
-        
-        // Don't fail on format errors for analyze endpoint - it's just metadata
-        // Format errors only matter for actual downloads
-        if (msg.includes("format is not available") || msg.includes("Requested format")) {
-          logger.warn({ error: msg }, "Format error during metadata fetch, but this is just analysis - ignoring");
-          // This is metadata analysis, not download, so format doesn't matter
-          // Try to return whatever we can parse from the error output
-          throw new Error(`Video metadata unavailable: ${msg}`);
-        }
-        
-        // Generic error with original message
-        throw new Error(`Failed to fetch video information: ${msg}`);
+      // If this is a "sign in" error and we're trying without cookies, continue to next player client
+      // This allows public videos to work without cookies
+      if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
+        logger.warn({ error: msg, playerClient, useCookies: cookieStrategy.useCookies }, "YouTube blocking requests - trying next player client or cookie strategy");
+        // Continue to next player client in current strategy
+        continue;
       }
       
-      // Otherwise, continue to next player client
+      // Handle specific error cases with user-friendly messages
+      if (msg.includes("DRM protected") || msg.includes("This video is DRM protected")) {
+        throw new Error("This video is DRM protected and cannot be downloaded");
+      }
+      
+      if (msg.includes("Private video") || msg.includes("private video")) {
+        throw new Error("This video is private and cannot be accessed");
+      }
+      
+      if (msg.includes("unavailable") || msg.includes("removed")) {
+        throw new Error("This video is unavailable or has been removed");
+      }
+      
+      // Don't fail on format errors for analyze endpoint - it's just metadata
+      // Format errors only matter for actual downloads
+      if (msg.includes("format is not available") || msg.includes("Requested format")) {
+        logger.warn({ error: msg }, "Format error during metadata fetch, but this is just analysis - ignoring");
+        // This is metadata analysis, not download, so format doesn't matter
+        // Try to return whatever we can parse from the error output
+        throw new Error(`Video metadata unavailable: ${msg}`);
+      }
+      
+      // For other errors, continue to next player client
       logger.info(`Retrying with next player client...`);
       continue;
     }
   }
+  }
   
   // This should never be reached, but TypeScript needs it
-  throw new Error("All player client attempts failed");
+  throw new Error("All extraction attempts failed");
 }
 
 router.post("/analyze", async (req: Request, res: Response) => {
