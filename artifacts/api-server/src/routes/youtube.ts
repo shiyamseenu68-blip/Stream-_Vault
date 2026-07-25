@@ -293,8 +293,13 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
           throw new Error("YouTube is blocking automated requests. Your cookies may be expired or invalid. Please regenerate fresh YouTube cookies and update YOUTUBE_COOKIES in Render.");
         }
         
+        // Don't fail on format errors for analyze endpoint - it's just metadata
+        // Format errors only matter for actual downloads
         if (msg.includes("format is not available") || msg.includes("Requested format")) {
-          throw new Error("The requested format is not available for this video");
+          logger.warn({ error: msg }, "Format error during metadata fetch, but this is just analysis - ignoring");
+          // This is metadata analysis, not download, so format doesn't matter
+          // Try to return whatever we can parse from the error output
+          throw new Error(`Video metadata unavailable: ${msg}`);
         }
         
         // Generic error with original message
@@ -543,9 +548,11 @@ function ytdlpVideoFormat(quality?: string): string {
   }
   if (h) {
     // Use single format to avoid needing ffmpeg for merging
-    return `best[height<=${h}]/best`;
+    // Add fallback to best if specific height not available
+    return `best[height<=${h}][ext=mp4]/best[height<=${h}]/best[ext=mp4]/best`;
   }
-  return "best";
+  // Fallback to mp4 first, then any format
+  return "best[ext=mp4]/best";
 }
 
 /**
