@@ -220,6 +220,7 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
 
     // Base args with anti-bot detection measures
     const args = [
+      "--no-config",  // Prevent reading config files that might have format settings
       "--dump-json",
       "--no-warnings",
       "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -589,6 +590,7 @@ async function downloadViaTempFile(
   }, "Download: YOUTUBE_COOKIES environment variable status");
 
   const args: string[] = [
+    "--no-config",  // Prevent reading config files that might have format settings
     "--no-playlist",
     "-o", tmpPath,
     "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
