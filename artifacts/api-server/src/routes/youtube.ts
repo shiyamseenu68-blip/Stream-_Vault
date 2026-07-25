@@ -26,16 +26,45 @@ const router = Router();
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Validate YouTube cookies format and check for required authentication cookies */
+function validateYoutubeCookies(cookiesContent: string): { valid: boolean; missing: string[]; hasRequired: boolean } {
+  const requiredCookies = ['SAPISID', 'HSID', 'SID', 'SSID', 'APISID', '__Secure-3PAPISID'];
+  const foundCookies: string[] = [];
+  const missingCookies: string[] = [];
+  
+  for (const cookieName of requiredCookies) {
+    if (cookiesContent.includes(cookieName)) {
+      foundCookies.push(cookieName);
+    } else {
+      missingCookies.push(cookieName);
+    }
+  }
+  
+  const hasRequired = foundCookies.length >= 3; // At least 3 required cookies
+  const valid = cookiesContent.includes('.youtube.com') && cookiesContent.includes('#HttpOnly_');
+  
+  return {
+    valid,
+    missing: missingCookies,
+    hasRequired
+  };
+}
+
 /** Write cookies content to a temp file and return the path */
 async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
   const id = randomBytes(8).toString("hex");
   const cookiesPath = join(tmpdir(), `cookies_${id}.txt`);
+  
+  // Validate cookies format
+  const validation = validateYoutubeCookies(cookiesContent);
   logger.info({ 
     cookiesLength: cookiesContent.length, 
     cookiesPath,
     tmpdir: tmpdir(),
-    firstLine: cookiesContent.split('\n')[0]?.substring(0, 100)
+    firstLine: cookiesContent.split('\n')[0]?.substring(0, 100),
+    validation
   }, "Writing cookies to temp file");
+  
   await writeFileAsync(cookiesPath, cookiesContent, "utf8");
   const fileExists = existsSync(cookiesPath);
   logger.info({ 
@@ -177,110 +206,109 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
     cookiesLength: cookiesContent?.length || 0 
   }, "YOUTUBE_COOKIES environment variable status");
 
-  // Base args with anti-bot detection measures
-  const args = [
-    "--dump-json",
-    "--no-warnings",
-    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "--referer", "https://www.youtube.com/",
-    "--extractor-args", "youtube:player_client=android",
-    "--no-check-certificates",
+  // Try different player clients in order of preference
+  const playerClients = [
+    "android", 
+    "android_vr", 
+    "ios", 
+    "web",
+    "mweb"
   ];
 
-  // Only add --no-playlist for single videos, not playlists
-  if (!isPlaylist) {
-    args.push("--no-playlist");
-  }
+  for (const playerClient of playerClients) {
+    logger.info({ playerClient }, `Trying with player client: ${playerClient}`);
 
-  if (cookiesContent) {
-    cookiesPath = await writeCookiesToTempFile(cookiesContent);
-    args.push("--cookies", cookiesPath);
-  }
+    // Base args with anti-bot detection measures
+    const args = [
+      "--dump-json",
+      "--no-warnings",
+      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "--referer", "https://www.youtube.com/",
+      "--extractor-args", `youtube:player_client=${playerClient}`,
+      "--no-check-certificates",
+    ];
 
-  args.push(url);
-
-  logger.info({ 
-    args: args.join(" "),
-    hasCookiesArg: args.includes("--cookies"),
-    cookiesPath 
-  }, "yt-dlp arguments configured");
-
-  try {
-    const { stdout, stderr } = await execFileAsync(YT_DLP, args, {
-      timeout: 30_000,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    
-    // Log stderr output for debugging
-    if (stderr) {
-      logger.warn({ stderr: stderr.substring(0, 1000) }, "yt-dlp stderr output");
+    // Only add --no-playlist for single videos, not playlists
+    if (!isPlaylist) {
+      args.push("--no-playlist");
     }
-    
-    // Clean up temp cookies file if it was created
-    if (cookiesPath) {
-      unlinkAsync(cookiesPath).catch(() => {});
+
+    if (cookiesContent) {
+      cookiesPath = await writeCookiesToTempFile(cookiesContent);
+      args.push("--cookies", cookiesPath);
     }
-    return JSON.parse(stdout.trim());
-  } catch (err) {
-    // Clean up temp cookies file on error
-    if (cookiesPath) {
-      unlinkAsync(cookiesPath).catch(() => {});
-    }
-    const msg = err instanceof Error ? err.message : "";
-    
-    // Log the full error for debugging
-    logger.error({ error: msg, hasCookies: !!cookiesContent, cookiesPath }, "yt-dlp execution failed");
-    
-    // If cookies were used and we got a blocking error, retry without cookies
-    if (cookiesContent && (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in") || msg.includes("cookies"))) {
-      logger.info("Retrying without cookies due to authentication error");
+
+    args.push(url);
+
+    logger.info({ 
+      args: args.join(" "),
+      hasCookiesArg: args.includes("--cookies"),
+      cookiesPath,
+ attempts: playerClients 
+    }, "yt-dlp arguments configured");
+
+    try {
+      const { stdout, stderr } = await execFileAsync(YT_DLP, args, {
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
       
-      // Retry with same args but without cookies
-      const retryArgs = args.filter(arg => arg !== "--cookies" && arg !== cookiesPath);
+      // Log stderr output for debugging
+      if (stderr) {
+        logger.warn({ stderr: stderr.substring(0, 1000) }, "yt-dlp stderr output");
+      }
       
-      try {
-        const { stdout: retryStdout, stderr: retryStderr } = await execFileAsync(YT_DLP, retryArgs, {
-          timeout: 30_000,
-          maxBuffer: 10 * 1024 * 1024,
-        });
-        
-        if (retryStderr) {
-          logger.warn({ stderr: retryStderr.substring(0, 1000) }, "yt-dlp retry stderr output");
+      // Clean up temp cookies file if it was created
+      if (cookiesPath) {
+        unlinkAsync(cookiesPath).catch(() => {});
+      }
+      logger.info({ playerClient }, `Successfully fetched with player client: ${playerClient}`);
+      return JSON.parse(stdout.trim());
+    } catch (err) {
+      // Clean up temp cookies file on error
+      if (cookiesPath) {
+        unlinkAsync(cookiesPath).catch(() => {});
+      }
+      const msg = err instanceof Error ? err.message : "";
+      
+      // Log the full error for debugging
+      logger.error({ error: msg, hasCookies: !!cookiesContent, cookiesPath, playerClient }, `yt-dlp execution failed with player client: ${playerClient}`);
+      
+      // If this is the last attempt, throw the error
+      if (playerClient === playerClients[playerClients.length - 1]) {
+        // Handle specific error cases with user-friendly messages
+        if (msg.includes("DRM protected") || msg.includes("This video is DRM protected")) {
+          throw new Error("This video is DRM protected and cannot be downloaded");
         }
         
-        logger.info("Retry without cookies succeeded");
-        return JSON.parse(retryStdout.trim());
-      } catch (retryErr) {
-        const retryMsg = retryErr instanceof Error ? retryErr.message : "";
-        logger.error({ error: retryMsg }, "Retry without cookies also failed");
-        // Continue to error handling below
+        if (msg.includes("Private video") || msg.includes("private video")) {
+          throw new Error("This video is private and cannot be accessed");
+        }
+        
+        if (msg.includes("unavailable") || msg.includes("removed")) {
+          throw new Error("This video is unavailable or has been removed");
+        }
+        
+        if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
+          throw new Error("YouTube is blocking automated requests. Your cookies may be expired or invalid. Please regenerate fresh YouTube cookies and update YOUTUBE_COOKIES in Render.");
+        }
+        
+        if (msg.includes("format is not available") || msg.includes("Requested format")) {
+          throw new Error("The requested format is not available for this video");
+        }
+        
+        // Generic error with original message
+        throw new Error(`Failed to fetch video information: ${msg}`);
       }
+      
+      // Otherwise, continue to next player client
+      logger.info(`Retrying with next player client...`);
+      continue;
     }
-    
-    // Handle specific error cases with user-friendly messages
-    if (msg.includes("DRM protected") || msg.includes("This video is DRM protected")) {
-      throw new Error("This video is DRM protected and cannot be downloaded");
-    }
-    
-    if (msg.includes("Private video") || msg.includes("private video")) {
-      throw new Error("This video is private and cannot be accessed");
-    }
-    
-    if (msg.includes("unavailable") || msg.includes("removed")) {
-      throw new Error("This video is unavailable or has been removed");
-    }
-    
-    if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
-      throw new Error("YouTube is blocking automated requests. Please try again later or configure YOUTUBE_COOKIES");
-    }
-    
-    if (msg.includes("format is not available") || msg.includes("Requested format")) {
-      throw new Error("The requested format is not available for this video");
-    }
-    
-    // Generic error with original message
-    throw new Error(`Failed to fetch video information: ${msg}`);
   }
+  
+  // This should never be reached, but TypeScript needs it
+  throw new Error("All player client attempts failed");
 }
 
 router.post("/analyze", async (req: Request, res: Response) => {
