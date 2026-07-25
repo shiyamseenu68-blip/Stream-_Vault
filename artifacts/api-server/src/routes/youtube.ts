@@ -225,15 +225,25 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
 }
 
 router.post("/analyze", async (req: Request, res: Response) => {
+  req.log.info({ 
+    method: req.method, 
+    url: req.url, 
+    headers: req.headers, 
+    body: req.body,
+    origin: req.headers.origin 
+  }, "Incoming /api/analyze request");
+
   const { url } = req.body as { url?: string };
 
   if (!url || typeof url !== "string") {
+    req.log.warn({ body: req.body }, "Invalid request - URL missing");
     res.status(400).json({ error: "INVALID_REQUEST", message: "URL is required" });
     return;
   }
 
   const normalised = normaliseYouTubeUrl(url);
   if (!normalised) {
+    req.log.warn({ url }, "Invalid URL format");
     res.status(400).json({
       error: "INVALID_URL",
       message: "Please enter a valid YouTube URL (youtube.com or youtu.be)",
