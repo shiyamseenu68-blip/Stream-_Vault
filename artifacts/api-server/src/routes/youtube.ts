@@ -515,6 +515,8 @@ router.post("/analyze", async (req: Request, res: Response) => {
   console.log("BUILD_MARKER_7eaba53");
   console.log("DEBUG BUILD 48bad79 - Cookie validation debugging");
   
+  res.setHeader("X-Build", "dd4ef7d");
+  
   req.log.info({ 
     method: req.method, 
     url: req.url, 
