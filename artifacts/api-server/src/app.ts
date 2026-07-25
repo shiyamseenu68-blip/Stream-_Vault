@@ -55,4 +55,35 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
+// Log all registered routes on startup
+function printRoutes(app: Express) {
+  console.log("=== REGISTERED ROUTES ===");
+  const routes: string[] = [];
+  
+  app._router.stack.forEach((middleware: any) => {
+    if (middleware.route) {
+      // Direct route
+      const path = middleware.route.path;
+      const methods = Object.keys(middleware.route.methods).join(', ');
+      routes.push(`${methods.toUpperCase()} ${path}`);
+    } else if (middleware.name === 'router') {
+      // Router middleware
+      middleware.handle.stack.forEach((handler: any) => {
+        if (handler.route) {
+          const path = handler.route.path;
+          const methods = Object.keys(handler.route.methods).join(', ');
+          routes.push(`${methods.toUpperCase()} /api${path}`);
+        }
+      });
+    }
+  });
+  
+  routes.sort().forEach(route => console.log(route));
+  console.log("========================");
+  
+  logger.info({ routes, total: routes.length }, "Registered Express routes");
+}
+
+printRoutes(app);
+
 export default app;
