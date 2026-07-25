@@ -497,7 +497,15 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
         }
         
         if (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in")) {
-          throw new Error("YouTube is blocking automated requests. Your cookies may be expired or invalid. Please regenerate fresh YouTube cookies and update YOUTUBE_COOKIES in Render.");
+          // For analyze endpoint, try to proceed without auth cookies
+          // This may fail for age-gated or private videos, but works for public videos
+          logger.warn({ error: msg, playerClient }, "YouTube blocking requests due to missing auth - may still work for public videos");
+          // Don't throw error - let it try other player clients or return partial data
+          if (playerClient === playerClients[playerClients.length - 1]) {
+            // Last attempt failed - throw a more informative error
+            throw new Error("YouTube requires authentication for this video. For age-gated or private videos, please add SAPISID or __Secure-3PAPISID cookies. For public videos, this error should not occur.");
+          }
+          continue;
         }
         
         // Don't fail on format errors for analyze endpoint - it's just metadata
