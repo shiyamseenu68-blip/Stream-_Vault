@@ -512,7 +512,7 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
 }
 
 router.post("/analyze", async (req: Request, res: Response) => {
-  console.log("DEBUG BUILD 8c47597 - Cookie validation debugging");
+  console.log("DEBUG BUILD 48bad79 - Cookie validation debugging");
   
   req.log.info({ 
     method: req.method, 
