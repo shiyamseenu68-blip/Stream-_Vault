@@ -37,6 +37,11 @@ function validateYoutubeCookies(cookiesContent: string): {
   hasSapisid: boolean;
   hasSecure3Papisid: boolean;
   hasSecure1Papisid: boolean;
+  sapisidDomains: string[];
+  secure3papisidDomains: string[];
+  secure1papisidDomains: string[];
+  totalLines: number;
+  parsedLines: number;
 } {
   // According to latest yt-dlp (commit 75079f4), only these are required:
   // SAPISID OR __Secure-3PAPISID (at least one must exist)
@@ -48,10 +53,20 @@ function validateYoutubeCookies(cookiesContent: string): {
   let hasSapisid = false;
   let hasSecure3Papisid = false;
   let hasSecure1Papisid = false;
+  const sapisidDomains: string[] = [];
+  const secure3papisidDomains: string[] = [];
+  const secure1papisidDomains: string[] = [];
   
   // Parse cookies to extract names and domains
-  const lines = cookiesContent.split('\n');
+  const lines = cookiesContent.split(/\r?\n/); // Handle both \r\n and \n
   let isNetscapeFormat = false;
+  let parsedLines = 0;
+  
+  console.log("=== COOKIE PARSING DEBUG ===");
+  console.log("Total lines in content:", lines.length);
+  console.log("First line:", lines[0]?.substring(0, 100));
+  console.log("Last line:", lines[lines.length - 1]?.substring(0, 100));
+  console.log("============================");
   
   for (const line of lines) {
     const trimmedLine = line.trim();
@@ -65,6 +80,7 @@ function validateYoutubeCookies(cookiesContent: string): {
     // Netscape format: domain \t flag \t path \t secure \t expiration \t name \t value
     const parts = trimmedLine.split('\t');
     if (parts.length >= 7) {
+      parsedLines++;
       const domain = parts[0];
       const name = parts[6];
       domains.add(domain);
@@ -72,13 +88,33 @@ function validateYoutubeCookies(cookiesContent: string): {
       
       if (name === 'SAPISID') {
         hasSapisid = true;
+        sapisidDomains.push(domain);
       } else if (name === '__Secure-3PAPISID') {
         hasSecure3Papisid = true;
+        secure3papisidDomains.push(domain);
       } else if (name === '__Secure-1PAPISID') {
         hasSecure1Papisid = true;
+        secure1papisidDomains.push(domain);
       }
+    } else {
+      console.log("Failed to parse line (not enough tabs):", trimmedLine.substring(0, 100));
     }
   }
+  
+  console.log("=== COOKIE PARSING RESULTS ===");
+  console.log("Is Netscape format:", isNetscapeFormat);
+  console.log("Total lines:", lines.length);
+  console.log("Successfully parsed lines:", parsedLines);
+  console.log("Total cookie names found:", allCookieNames.length);
+  console.log("All cookie names:", allCookieNames);
+  console.log("Unique domains:", Array.from(domains));
+  console.log("Has SAPISID:", hasSapisid);
+  console.log("SAPISID domains:", sapisidDomains);
+  console.log("Has __Secure-3PAPISID:", hasSecure3Papisid);
+  console.log("__Secure-3PAPISID domains:", secure3papisidDomains);
+  console.log("Has __Secure-1PAPISID:", hasSecure1Papisid);
+  console.log("__Secure-1PAPISID domains:", secure1papisidDomains);
+  console.log("==============================");
   
   // According to latest yt-dlp: need at least SAPISID or __Secure-3PAPISID
   const hasRequiredAuth = hasSapisid || hasSecure3Papisid;
@@ -94,12 +130,17 @@ function validateYoutubeCookies(cookiesContent: string): {
     valid,
     missing,
     hasRequired: hasRequiredAuth,
-    cookieNames: allCookieNames.slice(0, 20), // First 20 cookie names
+    cookieNames: allCookieNames,
     domains: Array.from(domains),
     isNetscapeFormat,
     hasSapisid,
     hasSecure3Papisid,
-    hasSecure1Papisid
+    hasSecure1Papisid,
+    sapisidDomains,
+    secure3papisidDomains,
+    secure1papisidDomains,
+    totalLines: lines.length,
+    parsedLines
   };
 }
 
@@ -115,10 +156,14 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
   console.log("Is Netscape format:", validation.isNetscapeFormat);
   console.log("Has youtube.com domain:", validation.domains.some(d => d.includes('youtube.com')));
   console.log("Domains found:", validation.domains);
-  console.log("Cookie names (first 20):", validation.cookieNames);
+  console.log("Total cookie names:", validation.cookieNames.length);
+  console.log("Cookie names:", validation.cookieNames);
   console.log("Has SAPISID:", validation.hasSapisid);
+  console.log("SAPISID domains:", validation.sapisidDomains);
   console.log("Has __Secure-3PAPISID:", validation.hasSecure3Papisid);
+  console.log("__Secure-3PAPISID domains:", validation.secure3papisidDomains);
   console.log("Has __Secure-1PAPISID:", validation.hasSecure1Papisid);
+  console.log("__Secure-1PAPISID domains:", validation.secure1papisidDomains);
   console.log("Missing required cookies:", validation.missing);
   console.log("Has required auth cookies:", validation.hasRequired);
   console.log("Overall valid:", validation.valid);
