@@ -7,7 +7,7 @@
 import { Router, type Request, type Response } from "express";
 import { spawn, execFile } from "child_process";
 import { promisify } from "util";
-import { createReadStream, unlink, stat, existsSync } from "fs";
+import { createReadStream, unlink, stat, existsSync, writeFile } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
@@ -15,6 +15,7 @@ import { randomBytes } from "crypto";
 const execFileAsync = promisify(execFile);
 const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
+const writeFileAsync = promisify(writeFile);
 const YT_DLP = process.env.YT_DLP_PATH
   || (process.platform === "win32"
     ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
@@ -23,6 +24,14 @@ const YT_DLP = process.env.YT_DLP_PATH
 const router = Router();
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Write cookies content to a temp file and return the path */
+async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
+  const id = randomBytes(8).toString("hex");
+  const cookiesPath = join(tmpdir(), `cookies_${id}.txt`);
+  await writeFileAsync(cookiesPath, cookiesContent, "utf8");
+  return cookiesPath;
+}
 
 /** Validate and normalise a YouTube URL string. Returns null if invalid. */
 function normaliseYouTubeUrl(raw: string): string | null {
@@ -147,7 +156,8 @@ function deepFind(obj: any, targetKey: string, maxDepth: number): any {
  * Works reliably on servers unlike ytdl-core which gets blocked.
  */
 async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<Record<string, any>> {
-  const cookies = process.env.YOUTUBE_COOKIES;
+  const cookiesContent = process.env.YOUTUBE_COOKIES;
+  let cookiesPath: string | null = null;
 
   // Base args with anti-bot detection measures
   const args = [
@@ -164,8 +174,9 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
     args.push("--no-playlist");
   }
 
-  if (cookies) {
-    args.push("--cookies", cookies);
+  if (cookiesContent) {
+    cookiesPath = await writeCookiesToTempFile(cookiesContent);
+    args.push("--cookies", cookiesPath);
   }
 
   args.push(url);
@@ -175,8 +186,16 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
       timeout: 30_000,
       maxBuffer: 10 * 1024 * 1024,
     });
+    // Clean up temp cookies file if it was created
+    if (cookiesPath) {
+      unlinkAsync(cookiesPath).catch(() => {});
+    }
     return JSON.parse(stdout.trim());
   } catch (err) {
+    // Clean up temp cookies file on error
+    if (cookiesPath) {
+      unlinkAsync(cookiesPath).catch(() => {});
+    }
     const msg = err instanceof Error ? err.message : "";
     
     // Handle specific error cases with user-friendly messages
@@ -457,7 +476,8 @@ async function downloadViaTempFile(
   req.log.info({ tmpPath }, "Download temp path");
 
   // yt-dlp args with anti-bot detection measures
-  const cookies = process.env.YOUTUBE_COOKIES;
+  const cookiesContent = process.env.YOUTUBE_COOKIES;
+  let cookiesPath: string | null = null;
   const args: string[] = [
     "--no-playlist",
     "-o", tmpPath,
@@ -467,8 +487,9 @@ async function downloadViaTempFile(
     "--no-check-certificates",
   ];
 
-  if (cookies) {
-    args.push("--cookies", cookies);
+  if (cookiesContent) {
+    cookiesPath = await writeCookiesToTempFile(cookiesContent);
+    args.push("--cookies", cookiesPath);
   }
 
   if (format === "audio") {
@@ -482,35 +503,42 @@ async function downloadViaTempFile(
   req.log.info({ args: args.join(" ") }, "Launching yt-dlp");
 
   // Run yt-dlp to completion (downloads HLS segments + merges)
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn(YT_DLP, args, { stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(YT_DLP, args, { stdio: ["ignore", "pipe", "pipe"] });
 
-    const stderrLines: string[] = [];
-    proc.stderr!.on("data", (d: Buffer) => {
-      const line = d.toString().trimEnd();
-      stderrLines.push(line);
-      req.log.debug({ msg: line }, "yt-dlp");
+      const stderrLines: string[] = [];
+      proc.stderr!.on("data", (d: Buffer) => {
+        const line = d.toString().trimEnd();
+        stderrLines.push(line);
+        req.log.debug({ msg: line }, "yt-dlp");
+      });
+
+      // Abort if client disconnects
+      const onClose = () => { if (!proc.killed) proc.kill("SIGTERM"); };
+      req.on("close", onClose);
+
+      proc.on("error", (err) => {
+        req.off("close", onClose);
+        reject(err);
+      });
+
+      proc.on("close", (code) => {
+        req.off("close", onClose);
+        if (code === 0) {
+          resolve();
+        } else {
+          const lastErr = stderrLines.slice(-3).join(" | ");
+          reject(new Error(`yt-dlp exited ${code}: ${lastErr}`));
+        }
+      });
     });
-
-    // Abort if client disconnects
-    const onClose = () => { if (!proc.killed) proc.kill("SIGTERM"); };
-    req.on("close", onClose);
-
-    proc.on("error", (err) => {
-      req.off("close", onClose);
-      reject(err);
-    });
-
-    proc.on("close", (code) => {
-      req.off("close", onClose);
-      if (code === 0) {
-        resolve();
-      } else {
-        const lastErr = stderrLines.slice(-3).join(" | ");
-        reject(new Error(`yt-dlp exited ${code}: ${lastErr}`));
-      }
-    });
-  });
+  } finally {
+    // Clean up temp cookies file if it was created
+    if (cookiesPath) {
+      unlinkAsync(cookiesPath).catch(() => {});
+    }
+  }
 
   // Check if file exists at expected path
   req.log.info({ tmpPath, exists: existsSync(tmpPath) }, "File existence check after yt-dlp");

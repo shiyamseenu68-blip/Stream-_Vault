@@ -15,6 +15,6 @@ services:
       - key: YT_DLP_PATH
         value: /opt/render/project/src/yt-dlp
       - key: YOUTUBE_COOKIES
-        value: /opt/render/project/src/cookies.txt
+        sync: false
     healthCheckPath: /api/healthz
     autoDeploy: true
