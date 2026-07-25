@@ -27,26 +27,64 @@ const router = Router();
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Validate YouTube cookies format and check for required authentication cookies */
-function validateYoutubeCookies(cookiesContent: string): { valid: boolean; missing: string[]; hasRequired: boolean } {
+function validateYoutubeCookies(cookiesContent: string): { 
+  valid: boolean; 
+  missing: string[]; 
+  hasRequired: boolean;
+  cookieNames: string[];
+  domains: string[];
+  isNetscapeFormat: boolean;
+} {
   const requiredCookies = ['SAPISID', 'HSID', 'SID', 'SSID', 'APISID', '__Secure-3PAPISID'];
   const foundCookies: string[] = [];
   const missingCookies: string[] = [];
+  const allCookieNames: string[] = [];
+  const domains: Set<string> = new Set();
+  
+  // Parse cookies to extract names and domains
+  const lines = cookiesContent.split('\n');
+  let isNetscapeFormat = false;
+  
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine || trimmedLine.startsWith('#')) {
+      if (trimmedLine === '# Netscape HTTP Cookie File') {
+        isNetscapeFormat = true;
+      }
+      continue;
+    }
+    
+    // Netscape format: domain \t flag \t path \t secure \t expiration \t name \t value
+    const parts = trimmedLine.split('\t');
+    if (parts.length >= 7) {
+      const domain = parts[0];
+      const name = parts[6];
+      domains.add(domain);
+      allCookieNames.push(name);
+      
+      if (requiredCookies.includes(name)) {
+        foundCookies.push(name);
+      }
+    }
+  }
   
   for (const cookieName of requiredCookies) {
-    if (cookiesContent.includes(cookieName)) {
-      foundCookies.push(cookieName);
-    } else {
+    if (!foundCookies.includes(cookieName)) {
       missingCookies.push(cookieName);
     }
   }
   
   const hasRequired = foundCookies.length >= 3; // At least 3 required cookies
-  const valid = cookiesContent.includes('.youtube.com') && cookiesContent.includes('#HttpOnly_');
+  const hasYoutubeDomain = Array.from(domains).some(d => d.includes('youtube.com'));
+  const valid = isNetscapeFormat && hasYoutubeDomain && hasRequired;
   
   return {
     valid,
     missing: missingCookies,
-    hasRequired
+    hasRequired,
+    cookieNames: allCookieNames.slice(0, 20), // First 20 cookie names
+    domains: Array.from(domains),
+    isNetscapeFormat
   };
 }
 
@@ -57,6 +95,17 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
   
   // Validate cookies format
   const validation = validateYoutubeCookies(cookiesContent);
+  
+  console.log("=== COOKIE VALIDATION DEBUG ===");
+  console.log("Is Netscape format:", validation.isNetscapeFormat);
+  console.log("Has youtube.com domain:", validation.domains.some(d => d.includes('youtube.com')));
+  console.log("Domains found:", validation.domains);
+  console.log("Cookie names (first 20):", validation.cookieNames);
+  console.log("Missing required cookies:", validation.missing);
+  console.log("Has required cookies:", validation.hasRequired);
+  console.log("Overall valid:", validation.valid);
+  console.log("==============================");
+
   logger.info({ 
     cookiesLength: cookiesContent.length, 
     cookiesPath,
@@ -64,6 +113,21 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
     firstLine: cookiesContent.split('\n')[0]?.substring(0, 100),
     validation
   }, "Writing cookies to temp file");
+  
+  // Early failure if cookies are invalid
+  if (!validation.valid) {
+    const errorDetails = [];
+    if (!validation.isNetscapeFormat) {
+      errorDetails.push("Not in Netscape cookie format");
+    }
+    if (!validation.domains.some(d => d.includes('youtube.com'))) {
+      errorDetails.push("No youtube.com domain found");
+    }
+    if (!validation.hasRequired) {
+      errorDetails.push(`Missing required cookies: ${validation.missing.join(', ')}`);
+    }
+    throw new Error(`Invalid YouTube cookies: ${errorDetails.join('; ')}. Please regenerate fresh cookies from YouTube.com.`);
+  }
   
   await writeFileAsync(cookiesPath, cookiesContent, "utf8");
   const fileExists = existsSync(cookiesPath);
