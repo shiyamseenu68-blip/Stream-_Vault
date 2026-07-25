@@ -150,11 +150,17 @@ function validateYoutubeCookies(cookiesContent: string): {
   // According to latest yt-dlp: need at least SAPISID or __Secure-3PAPISID
   const hasRequiredAuth = hasSapisid || hasSecure3Papisid;
   const hasYoutubeDomain = Array.from(domains).some(d => d.includes('youtube.com'));
-  const valid = isNetscapeFormat && hasYoutubeDomain && hasRequiredAuth;
+  
+  // More lenient validation: allow proceeding without auth cookies but warn
+  // This allows basic metadata fetch for public videos
+  const valid = isNetscapeFormat && hasYoutubeDomain;
   
   const missing: string[] = [];
   if (!hasSapisid && !hasSecure3Papisid) {
-    missing.push('SAPISID or __Secure-3PAPISID');
+    missing.push('SAPISID or __Secure-3PAPISID (required for age-gated or private videos)');
+  }
+  if (!hasYoutubeDomain) {
+    missing.push('Cookies for youtube.com domain');
   }
   
   return {
@@ -209,7 +215,16 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
     validation
   }, "Writing cookies to temp file");
   
-  // Early failure if cookies are invalid
+  // Log warning if auth cookies are missing but don't fail
+  if (!validation.hasRequired) {
+    logger.warn({ 
+      missing: validation.missing,
+      hasSapisid: validation.hasSapisid,
+      hasSecure3Papisid: validation.hasSecure3Papisid
+    }, "Missing authentication cookies - may fail for age-gated or private videos");
+  }
+  
+  // Only fail if format is fundamentally wrong
   if (!validation.valid) {
     const errorDetails = [];
     if (!validation.isNetscapeFormat) {
@@ -218,10 +233,7 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
     if (!validation.domains.some(d => d.includes('youtube.com'))) {
       errorDetails.push("No youtube.com domain found");
     }
-    if (!validation.hasRequired) {
-      errorDetails.push(`Missing required authentication cookies: ${validation.missing.join(', ')}`);
-    }
-    throw new Error(`Invalid YouTube cookies: ${errorDetails.join('; ')}. Please regenerate fresh cookies from YouTube.com with SAPISID or __Secure-3PAPISID.`);
+    throw new Error(`Invalid YouTube cookies: ${errorDetails.join('; ')}. Please regenerate fresh cookies from YouTube.com.`);
   }
   
   await writeFileAsync(cookiesPath, cookiesContent, "utf8");
@@ -974,6 +986,53 @@ router.post("/download/playlist", (req: Request, res: Response) => {
   }
   const qs = new URLSearchParams({ url, format, ...(quality ? { quality } : {}) });
   res.redirect(`/api/download?${qs.toString()}`);
+});
+
+// ─── Cookie Debug Endpoint ─────────────────────────────────────────────────────
+router.get("/debug/cookies", (_req, res) => {
+  const cookiesContent = process.env.YOUTUBE_COOKIES;
+  
+  if (!cookiesContent) {
+    res.json({
+      hasCookies: false,
+      totalCookies: 0,
+      hasSapisid: false,
+      hasSecure3Papisid: false,
+      hasSecure1Papisid: false,
+      parsed: false,
+      error: "YOUTUBE_COOKIES environment variable not set"
+    });
+    return;
+  }
+  
+  try {
+    const validation = validateYoutubeCookies(cookiesContent);
+    
+    res.json({
+      hasCookies: true,
+      totalCookies: validation.totalLines,
+      parsedCookies: validation.parsedLines,
+      hasSapisid: validation.hasSapisid,
+      hasSecure3Papisid: validation.hasSecure3Papisid,
+      hasSecure1Papisid: validation.hasSecure1Papisid,
+      sapisidDomains: validation.sapisidDomains,
+      secure3papisidDomains: validation.secure3papisidDomains,
+      secure1papisidDomains: validation.secure1papisidDomains,
+      isNetscapeFormat: validation.isNetscapeFormat,
+      valid: validation.valid,
+      missing: validation.missing,
+      cookieNames: validation.cookieNames.slice(0, 20), // First 20 cookie names
+      domains: validation.domains,
+      parsed: true,
+      build: "dd4ef7d"
+    });
+  } catch (error) {
+    res.json({
+      hasCookies: true,
+      parsed: false,
+      error: error instanceof Error ? error.message : "Unknown error during validation"
+    });
+  }
 });
 
 export default router;
