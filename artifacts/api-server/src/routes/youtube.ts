@@ -487,9 +487,25 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
         unlinkAsync(cookiesPath).catch(() => {});
       }
       const msg = err instanceof Error ? err.message : "";
+      const stderr = (err as any).stderr || "";
       
-      // Log the full error for debugging
-      logger.error({ error: msg, hasCookies: !!cookiesContent, cookiesPath, playerClient, useCookies: cookieStrategy.useCookies }, `yt-dlp execution failed with player client: ${playerClient}`);
+      // Log the full error with stderr for debugging
+      logger.error({ 
+        error: msg, 
+        stderr: stderr.substring(0, 2000),
+        hasCookies: !!cookiesContent, 
+        cookiesPath, 
+        playerClient, 
+        useCookies: cookieStrategy.useCookies,
+        strategy: cookieStrategy.description,
+        url,
+        args: args.join(" ")
+      }, `yt-dlp execution failed with player client: ${playerClient}`);
+      
+      console.log(`=== FAILED: ${playerClient} (${cookieStrategy.description}) ===`);
+      console.log("Error:", msg);
+      console.log("Stderr:", stderr.substring(0, 1000));
+      console.log("================================================");
       
       // If this is a "sign in" error and we're trying without cookies, continue to next player client
       // This allows public videos to work without cookies
