@@ -241,6 +241,13 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
 
     args.push(url);
 
+    console.log("=== YTDLP ARGS DEBUG ===");
+    console.log("Full args array:", JSON.stringify(args, null, 2));
+    console.log("Args as string:", args.join(" "));
+    console.log("Has -f flag:", args.includes("-f"));
+    console.log("Has --format flag:", args.includes("--format"));
+    console.log("========================");
+
     logger.info({ 
       args: args.join(" "),
       hasCookiesArg: args.includes("--cookies"),
