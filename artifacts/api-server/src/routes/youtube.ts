@@ -201,9 +201,32 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
   const cookiesContent = process.env.YOUTUBE_COOKIES;
   let cookiesPath: string | null = null;
 
+  // Log all relevant environment variables
+  const relevantEnvVars = Object.keys(process.env)
+    .filter(key => key.startsWith('YTDLP') || key.startsWith('YT_DLP') || key.startsWith('YOUTUBE') || key.startsWith('FORMAT'))
+    .reduce((acc, key) => {
+      acc[key] = process.env[key];
+      return acc;
+    }, {} as Record<string, string | undefined>);
+
+  console.log("=== ENVIRONMENT VARIABLES DEBUG ===");
+  console.log("Relevant env vars:", JSON.stringify(relevantEnvVars, null, 2));
+  console.log("====================================");
+
+  // Log yt-dlp version
+  try {
+    const { stdout: versionOutput } = await execFileAsync(YT_DLP, ["--version"], { timeout: 5000 });
+    console.log("=== YT-DLP VERSION ===");
+    console.log(versionOutput.trim());
+    console.log("======================");
+  } catch (err) {
+    console.log("Failed to get yt-dlp version:", err);
+  }
+
   logger.info({ 
     hasCookies: !!cookiesContent,
-    cookiesLength: cookiesContent?.length || 0 
+    cookiesLength: cookiesContent?.length || 0,
+    relevantEnvVars
   }, "YOUTUBE_COOKIES environment variable status");
 
   // Try different player clients in order of preference
@@ -220,7 +243,7 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
 
     // Base args with anti-bot detection measures
     const args = [
-      "--no-config",  // Prevent reading config files that might have format settings
+      "--ignore-config",  // Prevent reading config files that might have format settings
       "--dump-json",
       "--no-warnings",
       "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -246,6 +269,7 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
     console.log("Args as string:", args.join(" "));
     console.log("Has -f flag:", args.includes("-f"));
     console.log("Has --format flag:", args.includes("--format"));
+    console.log("YT_DLP executable:", YT_DLP);
     console.log("========================");
 
     logger.info({ 
@@ -256,6 +280,10 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
     }, "yt-dlp arguments configured");
 
     try {
+      console.log("=== EXECUTING COMMAND ===");
+      console.log("Command:", YT_DLP, args.join(" "));
+      console.log("========================");
+
       const { stdout, stderr } = await execFileAsync(YT_DLP, args, {
         timeout: 30_000,
         maxBuffer: 10 * 1024 * 1024,
@@ -597,7 +625,7 @@ async function downloadViaTempFile(
   }, "Download: YOUTUBE_COOKIES environment variable status");
 
   const args: string[] = [
-    "--no-config",  // Prevent reading config files that might have format settings
+    "--ignore-config",  // Prevent reading config files that might have format settings
     "--no-playlist",
     "-o", tmpPath,
     "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
