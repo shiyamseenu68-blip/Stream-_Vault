@@ -42,6 +42,7 @@ function validateYoutubeCookies(cookiesContent: string): {
   secure1papisidDomains: string[];
   totalLines: number;
   parsedLines: number;
+  cookieNameDomainMap: Array<{name: string, domain: string}>;
 } {
   // According to latest yt-dlp (commit 75079f4), only these are required:
   // SAPISID OR __Secure-3PAPISID (at least one must exist)
@@ -56,6 +57,18 @@ function validateYoutubeCookies(cookiesContent: string): {
   const sapisidDomains: string[] = [];
   const secure3papisidDomains: string[] = [];
   const secure1papisidDomains: string[] = [];
+  const cookieNameDomainMap: Array<{name: string, domain: string}> = [];
+  
+  // Check for literal \n vs actual newlines
+  const hasLiteralNewlines = cookiesContent.includes('\\n');
+  const hasActualNewlines = cookiesContent.includes('\n');
+  
+  console.log("=== ENV VAR FORMAT CHECK ===");
+  console.log("Has literal \\n sequences:", hasLiteralNewlines);
+  console.log("Has actual newline characters:", hasActualNewlines);
+  console.log("Content length:", cookiesContent.length);
+  console.log("First 200 chars:", cookiesContent.substring(0, 200));
+  console.log("============================");
   
   // Parse cookies to extract names and domains
   const lines = cookiesContent.split(/\r?\n/); // Handle both \r\n and \n
@@ -85,6 +98,7 @@ function validateYoutubeCookies(cookiesContent: string): {
       const name = parts[6];
       domains.add(domain);
       allCookieNames.push(name);
+      cookieNameDomainMap.push({ name, domain });
       
       if (name === 'SAPISID') {
         hasSapisid = true;
@@ -98,7 +112,25 @@ function validateYoutubeCookies(cookiesContent: string): {
       }
     } else {
       console.log("Failed to parse line (not enough tabs):", trimmedLine.substring(0, 100));
+      console.log("Line parts count:", parts.length);
     }
+  }
+  
+  console.log("=== PARSED COOKIE NAMES ===");
+  console.log("Total cookie names parsed:", allCookieNames.length);
+  console.log("Cookie names:", JSON.stringify(allCookieNames, null, 2));
+  console.log("Has SAPISID:", hasSapisid);
+  console.log("Has __Secure-3PAPISID:", hasSecure3Papisid);
+  console.log("Has __Secure-1PAPISID:", hasSecure1Papisid);
+  console.log("============================");
+  
+  if (!hasSapisid && !hasSecure3Papisid) {
+    console.log("=== COOKIE NAME-DOMAIN MAPPING ===");
+    console.log("All parsed cookies with domains:");
+    cookieNameDomainMap.forEach(({ name, domain }) => {
+      console.log(`  ${name}: ${domain}`);
+    });
+    console.log("================================");
   }
   
   console.log("=== COOKIE PARSING RESULTS ===");
@@ -106,7 +138,6 @@ function validateYoutubeCookies(cookiesContent: string): {
   console.log("Total lines:", lines.length);
   console.log("Successfully parsed lines:", parsedLines);
   console.log("Total cookie names found:", allCookieNames.length);
-  console.log("All cookie names:", allCookieNames);
   console.log("Unique domains:", Array.from(domains));
   console.log("Has SAPISID:", hasSapisid);
   console.log("SAPISID domains:", sapisidDomains);
@@ -140,7 +171,8 @@ function validateYoutubeCookies(cookiesContent: string): {
     secure3papisidDomains,
     secure1papisidDomains,
     totalLines: lines.length,
-    parsedLines
+    parsedLines,
+    cookieNameDomainMap
   };
 }
 
