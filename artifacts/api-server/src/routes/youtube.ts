@@ -149,10 +149,14 @@ function deepFind(obj: any, targetKey: string, maxDepth: number): any {
 async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<Record<string, any>> {
   const cookies = process.env.YOUTUBE_COOKIES;
 
-  // Base args - don't use player_client to avoid DRM issues
+  // Base args with anti-bot detection measures
   const args = [
     "--dump-json",
     "--no-warnings",
+    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "--referer", "https://www.youtube.com/",
+    "--extractor-args", "youtube:player_client=android",
+    "--no-check-certificates",
   ];
 
   // Only add --no-playlist for single videos, not playlists
@@ -452,11 +456,15 @@ async function downloadViaTempFile(
 
   req.log.info({ tmpPath }, "Download temp path");
 
-  // yt-dlp args
+  // yt-dlp args with anti-bot detection measures
   const cookies = process.env.YOUTUBE_COOKIES;
   const args: string[] = [
     "--no-playlist",
     "-o", tmpPath,
+    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "--referer", "https://www.youtube.com/",
+    "--extractor-args", "youtube:player_client=android",
+    "--no-check-certificates",
   ];
 
   if (cookies) {
