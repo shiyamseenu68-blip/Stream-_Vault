@@ -34,12 +34,20 @@ function validateYoutubeCookies(cookiesContent: string): {
   cookieNames: string[];
   domains: string[];
   isNetscapeFormat: boolean;
+  hasSapisid: boolean;
+  hasSecure3Papisid: boolean;
+  hasSecure1Papisid: boolean;
 } {
-  const requiredCookies = ['SAPISID', 'HSID', 'SID', 'SSID', 'APISID', '__Secure-3PAPISID'];
-  const foundCookies: string[] = [];
-  const missingCookies: string[] = [];
+  // According to latest yt-dlp (commit 75079f4), only these are required:
+  // SAPISID OR __Secure-3PAPISID (at least one must exist)
+  // __Secure-3PAPISID is the main authentication cookie
+  // __Secure-1PAPISID is optional but recommended
+  // HSID, SID, SSID, APISID are no longer required
   const allCookieNames: string[] = [];
   const domains: Set<string> = new Set();
+  let hasSapisid = false;
+  let hasSecure3Papisid = false;
+  let hasSecure1Papisid = false;
   
   // Parse cookies to extract names and domains
   const lines = cookiesContent.split('\n');
@@ -62,29 +70,36 @@ function validateYoutubeCookies(cookiesContent: string): {
       domains.add(domain);
       allCookieNames.push(name);
       
-      if (requiredCookies.includes(name)) {
-        foundCookies.push(name);
+      if (name === 'SAPISID') {
+        hasSapisid = true;
+      } else if (name === '__Secure-3PAPISID') {
+        hasSecure3Papisid = true;
+      } else if (name === '__Secure-1PAPISID') {
+        hasSecure1Papisid = true;
       }
     }
   }
   
-  for (const cookieName of requiredCookies) {
-    if (!foundCookies.includes(cookieName)) {
-      missingCookies.push(cookieName);
-    }
-  }
-  
-  const hasRequired = foundCookies.length >= 3; // At least 3 required cookies
+  // According to latest yt-dlp: need at least SAPISID or __Secure-3PAPISID
+  const hasRequiredAuth = hasSapisid || hasSecure3Papisid;
   const hasYoutubeDomain = Array.from(domains).some(d => d.includes('youtube.com'));
-  const valid = isNetscapeFormat && hasYoutubeDomain && hasRequired;
+  const valid = isNetscapeFormat && hasYoutubeDomain && hasRequiredAuth;
+  
+  const missing: string[] = [];
+  if (!hasSapisid && !hasSecure3Papisid) {
+    missing.push('SAPISID or __Secure-3PAPISID');
+  }
   
   return {
     valid,
-    missing: missingCookies,
-    hasRequired,
+    missing,
+    hasRequired: hasRequiredAuth,
     cookieNames: allCookieNames.slice(0, 20), // First 20 cookie names
     domains: Array.from(domains),
-    isNetscapeFormat
+    isNetscapeFormat,
+    hasSapisid,
+    hasSecure3Papisid,
+    hasSecure1Papisid
   };
 }
 
@@ -101,8 +116,11 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
   console.log("Has youtube.com domain:", validation.domains.some(d => d.includes('youtube.com')));
   console.log("Domains found:", validation.domains);
   console.log("Cookie names (first 20):", validation.cookieNames);
+  console.log("Has SAPISID:", validation.hasSapisid);
+  console.log("Has __Secure-3PAPISID:", validation.hasSecure3Papisid);
+  console.log("Has __Secure-1PAPISID:", validation.hasSecure1Papisid);
   console.log("Missing required cookies:", validation.missing);
-  console.log("Has required cookies:", validation.hasRequired);
+  console.log("Has required auth cookies:", validation.hasRequired);
   console.log("Overall valid:", validation.valid);
   console.log("==============================");
 
@@ -124,9 +142,9 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
       errorDetails.push("No youtube.com domain found");
     }
     if (!validation.hasRequired) {
-      errorDetails.push(`Missing required cookies: ${validation.missing.join(', ')}`);
+      errorDetails.push(`Missing required authentication cookies: ${validation.missing.join(', ')}`);
     }
-    throw new Error(`Invalid YouTube cookies: ${errorDetails.join('; ')}. Please regenerate fresh cookies from YouTube.com.`);
+    throw new Error(`Invalid YouTube cookies: ${errorDetails.join('; ')}. Please regenerate fresh cookies from YouTube.com with SAPISID or __Secure-3PAPISID.`);
   }
   
   await writeFileAsync(cookiesPath, cookiesContent, "utf8");
