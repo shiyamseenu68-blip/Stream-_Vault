@@ -33,10 +33,16 @@ async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
   logger.info({ 
     cookiesLength: cookiesContent.length, 
     cookiesPath,
-    tmpdir: tmpdir() 
+    tmpdir: tmpdir(),
+    firstLine: cookiesContent.split('\n')[0]?.substring(0, 100)
   }, "Writing cookies to temp file");
   await writeFileAsync(cookiesPath, cookiesContent, "utf8");
-  logger.info({ cookiesPath, exists: existsSync(cookiesPath) }, "Cookies file written successfully");
+  const fileExists = existsSync(cookiesPath);
+  logger.info({ 
+    cookiesPath, 
+    exists: fileExists,
+    fileSize: fileExists ? (await statAsync(cookiesPath)).size : 0
+  }, "Cookies file written successfully");
   return cookiesPath;
 }
 
@@ -200,10 +206,16 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
   }, "yt-dlp arguments configured");
 
   try {
-    const { stdout } = await execFileAsync(YT_DLP, args, {
+    const { stdout, stderr } = await execFileAsync(YT_DLP, args, {
       timeout: 30_000,
       maxBuffer: 10 * 1024 * 1024,
     });
+    
+    // Log stderr output for debugging
+    if (stderr) {
+      logger.warn({ stderr: stderr.substring(0, 1000) }, "yt-dlp stderr output");
+    }
+    
     // Clean up temp cookies file if it was created
     if (cookiesPath) {
       unlinkAsync(cookiesPath).catch(() => {});
@@ -215,6 +227,35 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
       unlinkAsync(cookiesPath).catch(() => {});
     }
     const msg = err instanceof Error ? err.message : "";
+    
+    // Log the full error for debugging
+    logger.error({ error: msg, hasCookies: !!cookiesContent, cookiesPath }, "yt-dlp execution failed");
+    
+    // If cookies were used and we got a blocking error, retry without cookies
+    if (cookiesContent && (msg.includes("sign in") || msg.includes("not a bot") || msg.includes("Sign in") || msg.includes("cookies"))) {
+      logger.info("Retrying without cookies due to authentication error");
+      
+      // Retry with same args but without cookies
+      const retryArgs = args.filter(arg => arg !== "--cookies" && arg !== cookiesPath);
+      
+      try {
+        const { stdout: retryStdout, stderr: retryStderr } = await execFileAsync(YT_DLP, retryArgs, {
+          timeout: 30_000,
+          maxBuffer: 10 * 1024 * 1024,
+        });
+        
+        if (retryStderr) {
+          logger.warn({ stderr: retryStderr.substring(0, 1000) }, "yt-dlp retry stderr output");
+        }
+        
+        logger.info("Retry without cookies succeeded");
+        return JSON.parse(retryStdout.trim());
+      } catch (retryErr) {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : "";
+        logger.error({ error: retryMsg }, "Retry without cookies also failed");
+        // Continue to error handling below
+      }
+    }
     
     // Handle specific error cases with user-friendly messages
     if (msg.includes("DRM protected") || msg.includes("This video is DRM protected")) {
