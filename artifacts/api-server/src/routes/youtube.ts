@@ -11,6 +11,7 @@ import { createReadStream, unlink, stat, existsSync, writeFile } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
+import { logger } from "../lib/logger";
 
 const execFileAsync = promisify(execFile);
 const statAsync = promisify(stat);
@@ -29,7 +30,13 @@ const router = Router();
 async function writeCookiesToTempFile(cookiesContent: string): Promise<string> {
   const id = randomBytes(8).toString("hex");
   const cookiesPath = join(tmpdir(), `cookies_${id}.txt`);
+  logger.info({ 
+    cookiesLength: cookiesContent.length, 
+    cookiesPath,
+    tmpdir: tmpdir() 
+  }, "Writing cookies to temp file");
   await writeFileAsync(cookiesPath, cookiesContent, "utf8");
+  logger.info({ cookiesPath, exists: existsSync(cookiesPath) }, "Cookies file written successfully");
   return cookiesPath;
 }
 
@@ -159,6 +166,11 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
   const cookiesContent = process.env.YOUTUBE_COOKIES;
   let cookiesPath: string | null = null;
 
+  logger.info({ 
+    hasCookies: !!cookiesContent,
+    cookiesLength: cookiesContent?.length || 0 
+  }, "YOUTUBE_COOKIES environment variable status");
+
   // Base args with anti-bot detection measures
   const args = [
     "--dump-json",
@@ -180,6 +192,12 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
   }
 
   args.push(url);
+
+  logger.info({ 
+    args: args.join(" "),
+    hasCookiesArg: args.includes("--cookies"),
+    cookiesPath 
+  }, "yt-dlp arguments configured");
 
   try {
     const { stdout } = await execFileAsync(YT_DLP, args, {
@@ -488,6 +506,12 @@ async function downloadViaTempFile(
   // yt-dlp args with anti-bot detection measures
   const cookiesContent = process.env.YOUTUBE_COOKIES;
   let cookiesPath: string | null = null;
+
+  logger.info({ 
+    hasCookies: !!cookiesContent,
+    cookiesLength: cookiesContent?.length || 0 
+  }, "Download: YOUTUBE_COOKIES environment variable status");
+
   const args: string[] = [
     "--no-playlist",
     "-o", tmpPath,
@@ -501,6 +525,12 @@ async function downloadViaTempFile(
     cookiesPath = await writeCookiesToTempFile(cookiesContent);
     args.push("--cookies", cookiesPath);
   }
+
+  logger.info({ 
+    args: args.join(" "),
+    hasCookiesArg: args.includes("--cookies"),
+    cookiesPath 
+  }, "Download: yt-dlp arguments configured");
 
   if (format === "audio") {
     args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
