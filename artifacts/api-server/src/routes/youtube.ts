@@ -409,6 +409,9 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
 
   // Log yt-dlp version
   try {
+    console.log("=== ABOUT TO EXECUTE YT-DLP (version check) ===");
+    console.log("Executable being used:", YT_DLP);
+    console.log("================================================");
     const { stdout: versionOutput } = await execFileAsync(YT_DLP, ["--version"], { timeout: 5000 });
     console.log("=== YT-DLP VERSION ===");
     console.log(versionOutput.trim());
@@ -487,6 +490,10 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
       console.log("=== EXECUTING COMMAND ===");
       console.log("Command:", YT_DLP, args.join(" "));
       console.log("========================");
+
+      console.log("=== ABOUT TO EXECUTE YT-DLP (main extraction) ===");
+      console.log("Executable being used:", YT_DLP);
+      console.log("==================================================");
 
       const { stdout, stderr } = await execFileAsync(YT_DLP, args, {
         timeout: 30_000,

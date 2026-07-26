@@ -69,7 +69,23 @@ console.log("process.env.PATH:", process.env.PATH);
   }
 })();
 
-let YT_DLP: string = process.env.YT_DLP_PATH || "yt-dlp";
+let YT_DLP: string = process.env.YT_DLP_PATH || "";
+
+// Use bundled binary at project root if no custom path
+if (!YT_DLP) {
+  const path = require("path");
+  const bundledPath = path.join(process.cwd(), "yt-dlp");
+  console.log("Checking bundled path:", bundledPath);
+  console.log("fs.existsSync:", require("fs").existsSync(bundledPath));
+  
+  if (require("fs").existsSync(bundledPath)) {
+    YT_DLP = bundledPath;
+    console.log("Using bundled binary:", bundledPath);
+  } else {
+    console.log("Bundled binary not found, falling back to system PATH");
+    YT_DLP = "yt-dlp";
+  }
+}
 
 // If YT_DLP_PATH is set to a relative path, ignore it and use system PATH
 if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
@@ -81,6 +97,9 @@ console.log("Final YT_DLP executable:", YT_DLP);
 console.log("========================");
 (async () => {
   try {
+    console.log("=== ABOUT TO EXECUTE YT-DLP ===");
+    console.log("Executable being used:", YT_DLP);
+    console.log("===============================");
     const { stdout: ytDlpVersion } = await execFileAsync(YT_DLP, ["--version"], { timeout: 5000 });
     logger.info({ ytDlpVersion: ytDlpVersion.trim(), executable: YT_DLP }, "yt-dlp version check");
   } catch (err) {
