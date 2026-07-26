@@ -13,7 +13,7 @@ services:
       - key: CORS_ORIGINS
         sync: false
       - key: YT_DLP_PATH
-        value: /opt/render/project/src/yt-dlp
+        value: ./yt-dlp
       - key: YOUTUBE_COOKIES
         sync: false
     healthCheckPath: /api/healthz
