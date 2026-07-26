@@ -30,6 +30,12 @@ logger.info({
 // Check yt-dlp version on startup - make non-fatal and auto-detect
 let YT_DLP: string = process.env.YT_DLP_PATH || "yt-dlp";
 
+console.log("=== PATH RESOLUTION DEBUG ===");
+console.log("process.cwd():", process.cwd());
+console.log("__dirname:", __dirname);
+console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
+console.log("Initial YT_DLP:", YT_DLP);
+
 // If YT_DLP_PATH is set to a relative path like ./yt-dlp, ignore it and use system PATH
 if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
   console.log("Ignoring relative YT_DLP_PATH, using system PATH");
@@ -39,13 +45,38 @@ if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
 // Try to use bundled binary if available
 const path = require("path");
 const bundledPath = path.join(__dirname, "../artifacts/api-server/yt-dlp");
+console.log("bundledPath:", bundledPath);
+console.log("fs.existsSync(bundledPath):", require("fs").existsSync(bundledPath));
+
 if (require("fs").existsSync(bundledPath)) {
   YT_DLP = bundledPath;
   console.log("Using bundled yt-dlp binary:", bundledPath);
+} else {
+  console.log("Bundled binary not found at:", bundledPath);
+  // Try alternative paths
+  const altPath1 = path.join(__dirname, "../../yt-dlp");
+  const altPath2 = path.join(process.cwd(), "artifacts/api-server/yt-dlp");
+  const altPath3 = path.join(process.cwd(), "yt-dlp");
+  
+  console.log("Trying alternative path 1:", altPath1, "exists:", require("fs").existsSync(altPath1));
+  console.log("Trying alternative path 2:", altPath2, "exists:", require("fs").existsSync(altPath2));
+  console.log("Trying alternative path 3:", altPath3, "exists:", require("fs").existsSync(altPath3));
+  
+  if (require("fs").existsSync(altPath1)) {
+    YT_DLP = altPath1;
+    console.log("Using alternative path 1:", altPath1);
+  } else if (require("fs").existsSync(altPath2)) {
+    YT_DLP = altPath2;
+    console.log("Using alternative path 2:", altPath2);
+  } else if (require("fs").existsSync(altPath3)) {
+    YT_DLP = altPath3;
+    console.log("Using alternative path 3:", altPath3);
+  } else {
+    console.log("No bundled binary found, falling back to system PATH");
+    YT_DLP = "yt-dlp";
+  }
 }
 
-console.log("=== YT-DLP PATH DEBUG ===");
-console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
 console.log("Final YT_DLP executable:", YT_DLP);
 console.log("========================");
 (async () => {
