@@ -28,12 +28,20 @@ logger.info({
 }, "Environment variables loaded on startup");
 
 // Check yt-dlp version on startup - make non-fatal and auto-detect
-let YT_DLP = process.env.YT_DLP_PATH || "yt-dlp";
+let YT_DLP: string = process.env.YT_DLP_PATH || "yt-dlp";
 
 // If YT_DLP_PATH is set to a relative path like ./yt-dlp, ignore it and use system PATH
 if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
   console.log("Ignoring relative YT_DLP_PATH, using system PATH");
   YT_DLP = "yt-dlp";
+}
+
+// Try to use bundled binary if available
+const path = require("path");
+const bundledPath = path.join(__dirname, "../artifacts/api-server/yt-dlp");
+if (require("fs").existsSync(bundledPath)) {
+  YT_DLP = bundledPath;
+  console.log("Using bundled yt-dlp binary:", bundledPath);
 }
 
 console.log("=== YT-DLP PATH DEBUG ===");

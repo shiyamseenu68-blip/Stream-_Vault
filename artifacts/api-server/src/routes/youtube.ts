@@ -17,11 +17,26 @@ const execFileAsync = promisify(execFile);
 const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
 const writeFileAsync = promisify(writeFile);
-let YT_DLP = process.env.YT_DLP_PATH || "yt-dlp";
 
-// If YT_DLP_PATH is set to a relative path like ./yt-dlp, ignore it and use system PATH
-if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
-  console.log("Ignoring relative YT_DLP_PATH, using system PATH");
+// Determine yt-dlp executable path
+let YT_DLP: string = process.env.YT_DLP_PATH || "";
+
+// Use bundled binary if no custom path is set
+if (!YT_DLP) {
+  const path = require("path");
+  const bundledPath = path.join(__dirname, "../../yt-dlp");
+  if (require("fs").existsSync(bundledPath)) {
+    YT_DLP = bundledPath;
+    console.log("Using bundled yt-dlp binary:", bundledPath);
+  } else {
+    // Fallback to system PATH
+    YT_DLP = "yt-dlp";
+    console.log("Bundled binary not found, using system PATH");
+  }
+}
+
+// Ensure we always have a value
+if (!YT_DLP) {
   YT_DLP = "yt-dlp";
 }
 

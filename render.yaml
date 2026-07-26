@@ -3,7 +3,7 @@ services:
     name: streamvault-api
     runtime: node
     plan: free
-    buildCommand: pip install yt-dlp && yt-dlp --version && pnpm install && pnpm --filter @workspace/api-server run build
+    buildCommand: curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./artifacts/api-server/yt-dlp && chmod +x ./artifacts/api-server/yt-dlp && ./artifacts/api-server/yt-dlp --version && pnpm install && pnpm --filter @workspace/api-server run build
     startCommand: node --enable-source-maps ./artifacts/api-server/dist/index.mjs
     envVars:
       - key: NODE_ENV
