@@ -3,7 +3,7 @@ services:
     name: streamvault-api
     runtime: node
     plan: free
-    buildCommand: pwd && ls -la && which curl && which wget && curl --version && wget --version && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o ./yt-dlp && chmod +x ./yt-dlp && ls -la ./yt-dlp && file ./yt-dlp && ./yt-dlp --version && pnpm install && pnpm --filter @workspace/api-server run build
+    buildCommand: pip install yt-dlp && yt-dlp --version && pnpm install && pnpm --filter @workspace/api-server run build
     startCommand: node --enable-source-maps ./artifacts/api-server/dist/index.mjs
     envVars:
       - key: NODE_ENV
@@ -12,8 +12,6 @@ services:
         value: 10000
       - key: CORS_ORIGINS
         sync: false
-      - key: YT_DLP_PATH
-        value: ./yt-dlp
       - key: YOUTUBE_COOKIES
         sync: false
     healthCheckPath: /api/healthz
