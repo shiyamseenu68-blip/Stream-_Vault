@@ -53,10 +53,10 @@ if (require("fs").existsSync(bundledPath)) {
   console.log("Using bundled yt-dlp binary:", bundledPath);
 } else {
   console.log("Bundled binary not found at:", bundledPath);
-  // Try alternative paths
+  // Try alternative paths - binary is now at project root
   const altPath1 = path.join(__dirname, "../../yt-dlp");
-  const altPath2 = path.join(process.cwd(), "artifacts/api-server/yt-dlp");
-  const altPath3 = path.join(process.cwd(), "yt-dlp");
+  const altPath2 = path.join(process.cwd(), "yt-dlp");
+  const altPath3 = path.join(__dirname, "../yt-dlp");
   
   console.log("Trying alternative path 1:", altPath1, "exists:", require("fs").existsSync(altPath1));
   console.log("Trying alternative path 2:", altPath2, "exists:", require("fs").existsSync(altPath2));
