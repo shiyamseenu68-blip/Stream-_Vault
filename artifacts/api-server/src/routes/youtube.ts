@@ -25,6 +25,19 @@ const YT_DLP_ARGS = ["-m", "yt_dlp"];
 console.log("=== YT-DLP EXECUTION MODE (youtube.ts) ===");
 console.log("Final YT_DLP executable:", YT_DLP);
 console.log("YT_DLP will be executed as:", YT_DLP, YT_DLP_ARGS.join(" "));
+
+// Verify .venv directory exists at runtime
+const fs = require("fs");
+const path = require("path");
+const venvPath = path.join(process.cwd(), ".venv");
+console.log("Checking .venv directory:", venvPath);
+console.log(".venv exists:", fs.existsSync(venvPath));
+if (fs.existsSync(venvPath)) {
+  console.log(".venv isDirectory:", fs.statSync(venvPath).isDirectory());
+  const pythonPath = path.join(venvPath, "bin", "python3");
+  console.log("Python executable path:", pythonPath);
+  console.log("Python executable exists:", fs.existsSync(pythonPath));
+}
 console.log("========================================");
 
 const router = Router();
@@ -395,10 +408,11 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
     console.log("Executable being used:", YT_DLP);
     console.log("Full command:", YT_DLP, [...YT_DLP_ARGS, "--version"].join(" "));
     console.log("================================================");
-    const { stdout: versionOutput } = await execFileAsync(YT_DLP, [...YT_DLP_ARGS, "--version"], { timeout: 5000 });
-    console.log("=== YT-DLP VERSION ===");
-    console.log(versionOutput.trim());
-    console.log("======================");
+    const { stdout: versionOutput, stderr: versionStderr } = await execFileAsync(YT_DLP, [...YT_DLP_ARGS, "--version"], { timeout: 5000 });
+    console.log("=== YT-DLP VERSION SUCCESS ===");
+    console.log("STDOUT:", versionOutput.trim());
+    console.log("STDERR:", versionStderr ? versionStderr.trim() : "(empty)");
+    console.log("==============================");
   } catch (err) {
     console.log("Failed to get yt-dlp version:", err);
   }

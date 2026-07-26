@@ -76,15 +76,54 @@ const YT_DLP_ARGS = ["-m", "yt_dlp"];
 console.log("Final YT_DLP executable:", YT_DLP);
 console.log("YT_DLP will be executed as:", YT_DLP, YT_DLP_ARGS.join(" "));
 console.log("========================");
+
+// Verify .venv directory exists at runtime
+console.log("=== RUNTIME ENVIRONMENT VERIFICATION ===");
+const fs = require("fs");
+const path = require("path");
+const venvPath = path.join(process.cwd(), ".venv");
+console.log("Checking .venv directory:", venvPath);
+console.log(".venv exists:", fs.existsSync(venvPath));
+if (fs.existsSync(venvPath)) {
+  console.log(".venv isDirectory:", fs.statSync(venvPath).isDirectory());
+  const pythonPath = path.join(venvPath, "bin", "python3");
+  console.log("Python executable path:", pythonPath);
+  console.log("Python executable exists:", fs.existsSync(pythonPath));
+  const sitePackagesPath = path.join(venvPath, "lib", "python3.11", "site-packages");
+  console.log("site-packages path:", sitePackagesPath);
+  console.log("site-packages exists:", fs.existsSync(sitePackagesPath));
+  if (fs.existsSync(sitePackagesPath)) {
+    try {
+      const ytDlpPath = path.join(sitePackagesPath, "yt_dlp");
+      console.log("yt_dlp package path:", ytDlpPath);
+      console.log("yt_dlp package exists:", fs.existsSync(ytDlpPath));
+    } catch (e) {
+      console.log("Error checking yt_dlp package:", e);
+    }
+  }
+}
+console.log("==========================================");
 (async () => {
   try {
     console.log("=== ABOUT TO EXECUTE YT-DLP ===");
     console.log("Executable being used:", YT_DLP);
     console.log("Full command:", YT_DLP, [...YT_DLP_ARGS, "--version"].join(" "));
     console.log("===============================");
-    const { stdout: ytDlpVersion } = await execFileAsync(YT_DLP, [...YT_DLP_ARGS, "--version"], { timeout: 5000 });
+    const { stdout: ytDlpVersion, stderr: ytDlpStderr } = await execFileAsync(YT_DLP, [...YT_DLP_ARGS, "--version"], { timeout: 5000 });
+    console.log("=== YT-DLP EXECUTION SUCCESS ===");
+    console.log("STDOUT:", ytDlpVersion.trim());
+    console.log("STDERR:", ytDlpStderr ? ytDlpStderr.trim() : "(empty)");
+    console.log("===================================");
     logger.info({ ytDlpVersion: ytDlpVersion.trim(), executable: YT_DLP }, "yt-dlp version check");
   } catch (err) {
+    console.log("=== YT-DLP EXECUTION FAILED ===");
+    console.log("Error:", err instanceof Error ? err.message : "Unknown error");
+    console.log("Error name:", err instanceof Error ? err.name : "Unknown");
+    console.log("Error code:", (err as any).code);
+    console.log("Error stack:", err instanceof Error ? err.stack : "Unknown");
+    console.log("Executable used:", YT_DLP);
+    console.log("Full command:", YT_DLP, [...YT_DLP_ARGS, "--version"].join(" "));
+    console.log("===================================");
     // Don't fail startup - just log warning
     logger.warn({ error: err instanceof Error ? err.message : "Unknown error", executable: YT_DLP }, "Failed to check yt-dlp version - app will start anyway");
   }

@@ -3,7 +3,7 @@ services:
     name: streamvault-api
     runtime: node
     plan: free
-    buildCommand: pnpm install && pnpm --filter @workspace/api-server run build && python3 -m venv .venv && ./.venv/bin/python3 -m pip install --upgrade pip && ./.venv/bin/python3 -m pip install yt-dlp && ./.venv/bin/python3 -m pip show yt-dlp && ./.venv/bin/python3 -m yt_dlp --version
+    buildCommand: pnpm install && pnpm --filter @workspace/api-server run build && python3 -m venv .venv && ./.venv/bin/python3 -m pip install --upgrade pip && ./.venv/bin/python3 -m pip install yt-dlp && ./.venv/bin/python3 -m pip show yt-dlp && ./.venv/bin/python3 -m yt_dlp --version || (echo "YT-DLP VERSION CHECK FAILED" && exit 1)
     startCommand: node --enable-source-maps ./artifacts/api-server/dist/index.mjs
     envVars:
       - key: NODE_ENV
