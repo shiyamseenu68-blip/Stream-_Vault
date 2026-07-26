@@ -3,7 +3,7 @@ services:
     name: streamvault-api
     runtime: node
     plan: free
-    buildCommand: python3 -m pip install --upgrade yt-dlp && python3 -m yt_dlp --version && pnpm install && pnpm --filter @workspace/api-server run build
+    buildCommand: pnpm install && pnpm --filter @workspace/api-server run build && .venv/bin/python3 -m pip install --upgrade yt-dlp && .venv/bin/python3 -m pip show yt-dlp && .venv/bin/python3 -m yt_dlp --version
     startCommand: node --enable-source-maps ./artifacts/api-server/dist/index.mjs
     envVars:
       - key: NODE_ENV

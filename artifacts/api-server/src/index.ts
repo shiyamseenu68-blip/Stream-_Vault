@@ -69,8 +69,8 @@ console.log("process.env.PATH:", process.env.PATH);
   }
 })();
 
-// Use Python module instead of binary
-const YT_DLP = process.env.YT_DLP_PATH || "python3";
+// Use Python module with .venv interpreter
+const YT_DLP = process.env.YT_DLP_PATH || "./.venv/bin/python3";
 const YT_DLP_ARGS = ["-m", "yt_dlp"];
 
 console.log("Final YT_DLP executable:", YT_DLP);
