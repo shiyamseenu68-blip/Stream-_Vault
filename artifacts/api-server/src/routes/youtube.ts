@@ -18,32 +18,14 @@ const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
 const writeFileAsync = promisify(writeFile);
 
-// Determine yt-dlp executable path - use bundled binary
-let YT_DLP: string = process.env.YT_DLP_PATH || "";
+// Use Python module instead of binary
+const YT_DLP = process.env.YT_DLP_PATH || "python3";
+const YT_DLP_ARGS = ["-m", "yt_dlp"];
 
-console.log("=== PATH RESOLUTION DEBUG (youtube.ts) ===");
-console.log("process.cwd():", process.cwd());
-console.log("__dirname:", __dirname);
-console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
-
-// Use bundled binary at project root if no custom path
-if (!YT_DLP) {
-  const path = require("path");
-  const bundledPath = path.join(process.cwd(), "yt-dlp");
-  console.log("Checking bundled path:", bundledPath);
-  console.log("fs.existsSync:", require("fs").existsSync(bundledPath));
-  
-  if (require("fs").existsSync(bundledPath)) {
-    YT_DLP = bundledPath;
-    console.log("Using bundled binary:", bundledPath);
-  } else {
-    console.log("Bundled binary not found, falling back to system PATH");
-    YT_DLP = "yt-dlp";
-  }
-}
-
+console.log("=== YT-DLP EXECUTION MODE (youtube.ts) ===");
 console.log("Final YT_DLP executable:", YT_DLP);
-console.log("======================================");
+console.log("YT_DLP will be executed as:", YT_DLP, YT_DLP_ARGS.join(" "));
+console.log("========================================");
 
 const router = Router();
 
@@ -411,8 +393,9 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
   try {
     console.log("=== ABOUT TO EXECUTE YT-DLP (version check) ===");
     console.log("Executable being used:", YT_DLP);
+    console.log("Full command:", YT_DLP, [...YT_DLP_ARGS, "--version"].join(" "));
     console.log("================================================");
-    const { stdout: versionOutput } = await execFileAsync(YT_DLP, ["--version"], { timeout: 5000 });
+    const { stdout: versionOutput } = await execFileAsync(YT_DLP, [...YT_DLP_ARGS, "--version"], { timeout: 5000 });
     console.log("=== YT-DLP VERSION ===");
     console.log(versionOutput.trim());
     console.log("======================");
@@ -488,14 +471,14 @@ async function ytdlpDumpJson(url: string, isPlaylist: boolean = false): Promise<
 
     try {
       console.log("=== EXECUTING COMMAND ===");
-      console.log("Command:", YT_DLP, args.join(" "));
+      console.log("Command:", YT_DLP, [...YT_DLP_ARGS, ...args].join(" "));
       console.log("========================");
 
       console.log("=== ABOUT TO EXECUTE YT-DLP (main extraction) ===");
       console.log("Executable being used:", YT_DLP);
       console.log("==================================================");
 
-      const { stdout, stderr } = await execFileAsync(YT_DLP, args, {
+      const { stdout, stderr } = await execFileAsync(YT_DLP, [...YT_DLP_ARGS, ...args], {
         timeout: 30_000,
         maxBuffer: 10 * 1024 * 1024,
       });
@@ -889,7 +872,7 @@ async function downloadViaTempFile(
   // Run yt-dlp to completion (downloads HLS segments + merges)
   try {
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn(YT_DLP, args, { stdio: ["ignore", "pipe", "pipe"] });
+      const proc = spawn(YT_DLP, [...YT_DLP_ARGS, ...args], { stdio: ["ignore", "pipe", "pipe"] });
 
       const stderrLines: string[] = [];
       proc.stderr!.on("data", (d: Buffer) => {
@@ -954,7 +937,7 @@ async function downloadViaTempFile(
   try {
     const { stdout } = await execFileAsync(
       YT_DLP,
-      ["--print", "title", "--no-playlist", "--no-warnings",
+      [...YT_DLP_ARGS, "--print", "title", "--no-playlist", "--no-warnings",
        normalised],
       { timeout: 10_000 },
     );
