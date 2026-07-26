@@ -29,12 +29,16 @@ logger.info({
 
 // Check yt-dlp version on startup
 const YT_DLP = process.env.YT_DLP_PATH || "yt-dlp";
+console.log("=== YT-DLP PATH DEBUG ===");
+console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
+console.log("Final YT_DLP executable:", YT_DLP);
+console.log("========================");
 (async () => {
   try {
     const { stdout: ytDlpVersion } = await execFileAsync(YT_DLP, ["--version"], { timeout: 5000 });
-    logger.info({ ytDlpVersion: ytDlpVersion.trim() }, "yt-dlp version check");
+    logger.info({ ytDlpVersion: ytDlpVersion.trim(), executable: YT_DLP }, "yt-dlp version check");
   } catch (err) {
-    logger.error({ error: err instanceof Error ? err.message : "Unknown error" }, "Failed to check yt-dlp version");
+    logger.error({ error: err instanceof Error ? err.message : "Unknown error", executable: YT_DLP }, "Failed to check yt-dlp version");
   }
   
   // Check ffmpeg version on startup

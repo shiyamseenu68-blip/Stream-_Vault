@@ -22,6 +22,11 @@ const YT_DLP = process.env.YT_DLP_PATH
     ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
     : "yt-dlp");
 
+console.log("=== YT-DLP PATH DEBUG (youtube.ts) ===");
+console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
+console.log("Final YT_DLP executable:", YT_DLP);
+console.log("======================================");
+
 const router = Router();
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
