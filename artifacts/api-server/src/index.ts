@@ -27,8 +27,15 @@ logger.info({
   corsOrigins: process.env.CORS_ORIGINS
 }, "Environment variables loaded on startup");
 
-// Check yt-dlp version on startup
-const YT_DLP = process.env.YT_DLP_PATH || "yt-dlp";
+// Check yt-dlp version on startup - make non-fatal and auto-detect
+let YT_DLP = process.env.YT_DLP_PATH || "yt-dlp";
+
+// If YT_DLP_PATH is set to a relative path like ./yt-dlp, ignore it and use system PATH
+if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
+  console.log("Ignoring relative YT_DLP_PATH, using system PATH");
+  YT_DLP = "yt-dlp";
+}
+
 console.log("=== YT-DLP PATH DEBUG ===");
 console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
 console.log("Final YT_DLP executable:", YT_DLP);
@@ -38,7 +45,8 @@ console.log("========================");
     const { stdout: ytDlpVersion } = await execFileAsync(YT_DLP, ["--version"], { timeout: 5000 });
     logger.info({ ytDlpVersion: ytDlpVersion.trim(), executable: YT_DLP }, "yt-dlp version check");
   } catch (err) {
-    logger.error({ error: err instanceof Error ? err.message : "Unknown error", executable: YT_DLP }, "Failed to check yt-dlp version");
+    // Don't fail startup - just log warning
+    logger.warn({ error: err instanceof Error ? err.message : "Unknown error", executable: YT_DLP }, "Failed to check yt-dlp version - app will start anyway");
   }
   
   // Check ffmpeg version on startup

@@ -17,10 +17,13 @@ const execFileAsync = promisify(execFile);
 const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
 const writeFileAsync = promisify(writeFile);
-const YT_DLP = process.env.YT_DLP_PATH
-  || (process.platform === "win32"
-    ? "C:\\Users\\shiya\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\yt-dlp.exe"
-    : "yt-dlp");
+let YT_DLP = process.env.YT_DLP_PATH || "yt-dlp";
+
+// If YT_DLP_PATH is set to a relative path like ./yt-dlp, ignore it and use system PATH
+if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
+  console.log("Ignoring relative YT_DLP_PATH, using system PATH");
+  YT_DLP = "yt-dlp";
+}
 
 console.log("=== YT-DLP PATH DEBUG (youtube.ts) ===");
 console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
