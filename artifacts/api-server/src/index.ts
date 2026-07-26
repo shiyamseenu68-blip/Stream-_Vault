@@ -27,14 +27,49 @@ logger.info({
   corsOrigins: process.env.CORS_ORIGINS
 }, "Environment variables loaded on startup");
 
-// Check yt-dlp version on startup - use system-installed from pip
-let YT_DLP: string = process.env.YT_DLP_PATH || "yt-dlp";
-
-console.log("=== PATH RESOLUTION DEBUG ===");
+// Check yt-dlp version on startup - diagnose PATH and availability
+console.log("=== PATH AND YT-DLP DIAGNOSTICS ===");
 console.log("process.cwd():", process.cwd());
 console.log("__dirname:", __dirname);
 console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
-console.log("Initial YT_DLP:", YT_DLP);
+console.log("process.env.PATH:", process.env.PATH);
+
+(async () => {
+  // Run diagnostic commands
+  try {
+    const { exec } = require("child_process");
+    const { promisify } = require("util");
+    const execAsync = promisify(exec);
+    
+    console.log("--- Running which yt-dlp ---");
+    try {
+      const { stdout: whichOutput } = await execAsync("which yt-dlp");
+      console.log("which yt-dlp:", whichOutput.trim());
+    } catch (e) {
+      console.log("which yt-dlp: NOT FOUND");
+    }
+    
+    console.log("--- Running command -v yt-dlp ---");
+    try {
+      const { stdout: commandOutput } = await execAsync("command -v yt-dlp");
+      console.log("command -v yt-dlp:", commandOutput.trim());
+    } catch (e) {
+      console.log("command -v yt-dlp: NOT FOUND");
+    }
+    
+    console.log("--- Checking /usr/local/bin/yt-dlp ---");
+    try {
+      const { stdout: lsOutput } = await execAsync("ls -la /usr/local/bin/yt-dlp");
+      console.log("ls -la /usr/local/bin/yt-dlp:", lsOutput.trim());
+    } catch (e) {
+      console.log("ls -la /usr/local/bin/yt-dlp: NOT FOUND");
+    }
+  } catch (e) {
+    console.log("Diagnostic commands failed:", e);
+  }
+})();
+
+let YT_DLP: string = process.env.YT_DLP_PATH || "yt-dlp";
 
 // If YT_DLP_PATH is set to a relative path, ignore it and use system PATH
 if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {

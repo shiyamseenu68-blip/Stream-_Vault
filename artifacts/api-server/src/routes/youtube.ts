@@ -18,19 +18,28 @@ const statAsync = promisify(stat);
 const unlinkAsync = promisify(unlink);
 const writeFileAsync = promisify(writeFile);
 
-// Determine yt-dlp executable path - use system-installed from pip
-let YT_DLP: string = process.env.YT_DLP_PATH || "yt-dlp";
+// Determine yt-dlp executable path - use bundled binary
+let YT_DLP: string = process.env.YT_DLP_PATH || "";
 
 console.log("=== PATH RESOLUTION DEBUG (youtube.ts) ===");
 console.log("process.cwd():", process.cwd());
 console.log("__dirname:", __dirname);
 console.log("process.env.YT_DLP_PATH:", process.env.YT_DLP_PATH);
-console.log("Initial YT_DLP:", YT_DLP);
 
-// If YT_DLP_PATH is set to a relative path, ignore it and use system PATH
-if (YT_DLP.startsWith("./") || YT_DLP.startsWith(".\\")) {
-  console.log("Ignoring relative YT_DLP_PATH, using system PATH");
-  YT_DLP = "yt-dlp";
+// Use bundled binary at project root if no custom path
+if (!YT_DLP) {
+  const path = require("path");
+  const bundledPath = path.join(process.cwd(), "yt-dlp");
+  console.log("Checking bundled path:", bundledPath);
+  console.log("fs.existsSync:", require("fs").existsSync(bundledPath));
+  
+  if (require("fs").existsSync(bundledPath)) {
+    YT_DLP = bundledPath;
+    console.log("Using bundled binary:", bundledPath);
+  } else {
+    console.log("Bundled binary not found, falling back to system PATH");
+    YT_DLP = "yt-dlp";
+  }
 }
 
 console.log("Final YT_DLP executable:", YT_DLP);
